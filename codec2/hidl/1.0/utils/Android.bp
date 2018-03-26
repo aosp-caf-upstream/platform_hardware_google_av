@@ -1,0 +1,50 @@
+cc_library {
+    name: "libcodec2_hidl_utils@1.0",
+    vendor_available: true,
+
+    defaults: ["hidl_defaults"],
+
+    srcs: [
+        "Component.cpp",
+        "ComponentStore.cpp",
+        "Configurable.cpp",
+        "InputSurface.cpp",
+        "InputSurfaceConnection.cpp",
+        "types.cpp",
+    ],
+
+    header_libs: [
+        "libsystem_headers",
+        "libstagefright_codec2_internal", // private
+    ],
+
+    shared_libs: [
+        "android.hardware.graphics.bufferqueue@1.0",
+        "android.hardware.graphics.common@1.0",
+        "android.hardware.media.bufferpool@1.0",
+        "android.hardware.media.omx@1.0",
+        "android.hardware.media@1.0",
+        "hardware.google.media.c2@1.0",
+        "libcutils",
+        "libhidlbase",
+        "libhidltransport",
+        "libhwbinder",
+        "liblog",
+        "libstagefright_bufferqueue_helper",
+        "libstagefright_codec2",
+        "libstagefright_codec2_vndk",
+        "libui",
+        "libutils",
+    ],
+
+    export_include_dirs: [
+        "include",
+    ],
+
+    export_shared_lib_headers: [
+        "hardware.google.media.c2@1.0",
+        "libhidlbase",
+        "libstagefright_codec2",
+    ],
+}
+
