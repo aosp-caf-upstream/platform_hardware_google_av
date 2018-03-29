@@ -235,9 +235,8 @@ status_t C2OMXNode::emptyBuffer(
                 // TODO: fence
                 new Buffer2D(block->share(
                         C2Rect(block->width(), block->height()), ::C2Fence())),
-                [handle, buffer, source = getSource()](C2Buffer *ptr) {
+                [buffer, source = getSource()](C2Buffer *ptr) {
                     delete ptr;
-                    native_handle_delete(handle);
                     // TODO: fence
                     (void)source->onInputBufferEmptied(buffer, -1);
                 });

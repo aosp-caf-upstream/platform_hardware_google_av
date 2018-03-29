@@ -1,4 +1,5 @@
 subdirs = [
     "codecs/*",
     "sfplugin",
+    "v4l2store",
 ]
