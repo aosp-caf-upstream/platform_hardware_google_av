@@ -338,7 +338,7 @@ public:
      */
     size_t assignSlot(const sp<Codec2Buffer> &buffer) {
         for (size_t i = 0; i < mBuffers.size(); ++i) {
-            if (mBuffers[i].clientBuffer.promote() == nullptr
+            if (mBuffers[i].clientBuffer == nullptr
                     && mBuffers[i].compBuffer.expired()) {
                 mBuffers[i].clientBuffer = buffer;
                 return i;
@@ -360,8 +360,9 @@ public:
         sp<Codec2Buffer> c2Buffer;
         size_t index = mBuffers.size();
         for (size_t i = 0; i < mBuffers.size(); ++i) {
-            if (mBuffers[i].clientBuffer.promote() == buffer) {
-                c2Buffer = mBuffers[i].clientBuffer.promote();
+            if (mBuffers[i].clientBuffer == buffer) {
+                c2Buffer = mBuffers[i].clientBuffer;
+                mBuffers[i].clientBuffer.clear();
                 index = i;
                 break;
             }
@@ -379,7 +380,7 @@ private:
     friend class BuffersArrayImpl;
 
     struct Entry {
-        wp<Codec2Buffer> clientBuffer;
+        sp<Codec2Buffer> clientBuffer;
         std::weak_ptr<C2Buffer> compBuffer;
     };
     std::vector<Entry> mBuffers;
@@ -404,7 +405,7 @@ public:
             size_t minSize,
             std::function<sp<Codec2Buffer>()> allocate) {
         for (size_t i = 0; i < impl.mBuffers.size(); ++i) {
-            sp<Codec2Buffer> clientBuffer = impl.mBuffers[i].clientBuffer.promote();
+            sp<Codec2Buffer> clientBuffer = impl.mBuffers[i].clientBuffer;
             bool ownedByClient = (clientBuffer != nullptr);
             if (!ownedByClient) {
                 clientBuffer = allocate();
