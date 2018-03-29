@@ -1,9 +1,6 @@
 cc_library {
     name: "libstagefright_bufferpool@1.0",
     vendor_available: true,
-    vndk: {
-        enabled: true,
-    },
     srcs: [
         "Accessor.cpp",
         "AccessorImpl.cpp",

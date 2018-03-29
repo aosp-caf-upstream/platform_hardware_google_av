@@ -5,10 +5,6 @@ cc_library_headers {
         "internal",
     ],
 
-    vndk: {
-        enabled: true,
-    },
-
     // TODO: Remove this when this module is moved back to frameworks/av.
     vendor_available: true,
 }
@@ -16,9 +12,6 @@ cc_library_headers {
 cc_library_shared {
     name: "libstagefright_codec2_vndk",
     vendor_available: true,
-    vndk: {
-        enabled: true,
-    },
 
     srcs: [
         "C2AllocatorIon.cpp",
