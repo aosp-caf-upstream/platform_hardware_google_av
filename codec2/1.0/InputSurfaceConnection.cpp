@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright 2018, The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,57 +15,40 @@
  */
 
 //#define LOG_NDEBUG 0
-#define LOG_TAG "Codec2-InputSurfaceConnection"
-#include <log/log.h>
+#define LOG_TAG "InputSurfaceConnection"
+#include <utils/Log.h>
 
-#include <codec2/hidl/1.0/InputSurfaceConnection.h>
-
-#include <media/stagefright/bqhelper/ComponentWrapper.h>
-
+#include <C2AllocatorGralloc.h>
 #include <C2BlockInternal.h>
 #include <C2PlatformSupport.h>
-#include <C2AllocatorGralloc.h>
 
-#include <C2Component.h>
-#include <C2Work.h>
-#include <C2Buffer.h>
-#include <C2.h>
+#include <media/stagefright/codec2/1.0/InputSurfaceConnection.h>
+#include <system/window.h>
 
-#include <ui/GraphicBuffer.h>
-#include <system/graphics.h>
-#include <utils/Errors.h>
-
-#include <memory>
-#include <list>
-#include <mutex>
-#include <atomic>
-
-namespace /* unnamed */ {
-
-class Buffer2D : public C2Buffer {
-public:
-    explicit Buffer2D(C2ConstGraphicBlock block) : C2Buffer({ block }) {
-    }
-};
-
-constexpr int32_t kBufferCount = 16;
-
-} // unnamed namespace
-
+namespace android {
 namespace hardware {
-namespace google {
 namespace media {
 namespace c2 {
 namespace V1_0 {
-namespace utils {
+namespace implementation {
 
-using namespace ::android;
+using ::android::status_t;
 
-struct InputSurfaceConnection::Impl : public ComponentWrapper {
-    Impl(
-            const sp<GraphicBufferSource>& source,
-            const std::shared_ptr<C2Component>& comp) :
-        mSource(source), mComp(comp) {
+namespace {
+
+class Buffer2D : public C2Buffer {
+public:
+    explicit Buffer2D(C2ConstGraphicBlock block) : C2Buffer({ block }) {}
+};
+
+}  // namespace
+
+constexpr int32_t kBufferCount = 16;
+
+class InputSurfaceConnection::Impl : public ComponentWrapper {
+public:
+    Impl(const sp<GraphicBufferSource> &source, const std::shared_ptr<C2Component> &comp)
+        : mSource(source), mComp(comp) {
     }
 
     virtual ~Impl() = default;
@@ -84,15 +67,14 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
         android_dataspace dataSpace = HAL_DATASPACE_BT709;
         // TODO: read settings properly from the interface
         err = source->configure(
-                this, dataSpace, kBufferCount, 1080, 1920,
-                GRALLOC_USAGE_SW_READ_OFTEN);
+                this, dataSpace, kBufferCount, 1080, 1920, GRALLOC_USAGE_SW_READ_OFTEN);
         if (err != OK) {
             ALOGE("Impl::init: GBS configure failed: %d", err);
             return false;
         }
         for (int32_t i = 0; i < kBufferCount; ++i) {
             if (!source->onInputBufferAdded(i).isOk()) {
-                ALOGE("Impl::init: populating GBS slots failed");
+                ALOGE("Impl::init: population GBS slots failed");
                 return false;
             }
         }
@@ -100,11 +82,9 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
             ALOGE("Impl::init: GBS start failed");
             return false;
         }
-        mAllocatorMutex.lock();
         c2_status_t c2err = GetCodec2PlatformAllocatorStore()->fetchAllocator(
                 C2AllocatorStore::PLATFORM_START + 1,  // GRALLOC
                 &mAllocator);
-        mAllocatorMutex.unlock();
         if (c2err != OK) {
             ALOGE("Impl::init: failed to fetch gralloc allocator: %d", c2err);
             return false;
@@ -113,11 +93,9 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
     }
 
     // From ComponentWrapper
-    virtual status_t submitBuffer(
-            int32_t bufferId,
-            const sp<GraphicBuffer>& buffer,
-            int64_t timestamp,
-            int fenceFd) override {
+    status_t submitBuffer(
+            int32_t bufferId, const sp<GraphicBuffer> &buffer,
+            int64_t timestamp, int fenceFd) override {
         ALOGV("Impl::submitBuffer bufferId = %d", bufferId);
         // TODO: Use fd to construct fence
         (void)fenceFd;
@@ -128,30 +106,26 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
         }
 
         std::shared_ptr<C2GraphicAllocation> alloc;
-        C2Handle* handle = WrapNativeCodec2GrallocHandle(
+        C2Handle *handle = WrapNativeCodec2GrallocHandle(
                 native_handle_clone(buffer->handle),
                 buffer->width, buffer->height,
                 buffer->format, buffer->usage, buffer->stride);
-        mAllocatorMutex.lock();
         c2_status_t err = mAllocator->priorGraphicAllocation(handle, &alloc);
-        mAllocatorMutex.unlock();
         if (err != OK) {
             return UNKNOWN_ERROR;
         }
-        std::shared_ptr<C2GraphicBlock> block =
-                _C2BlockFactory::CreateGraphicBlock(alloc);
+        std::shared_ptr<C2GraphicBlock> block = _C2BlockFactory::CreateGraphicBlock(alloc);
 
         std::unique_ptr<C2Work> work(new C2Work);
         work->input.flags = (C2FrameData::flags_t)0;
         work->input.ordinal.timestamp = timestamp;
-        work->input.ordinal.frameIndex = mFrameIndex.fetch_add(
-                1, std::memory_order_relaxed);
+        work->input.ordinal.frameIndex = mFrameIndex++;
         work->input.buffers.clear();
         std::shared_ptr<C2Buffer> c2Buffer(
                 // TODO: fence
                 new Buffer2D(block->share(
                         C2Rect(block->width(), block->height()), ::C2Fence())),
-                [bufferId, src = mSource](C2Buffer* ptr) {
+                [bufferId, src = mSource](C2Buffer *ptr) {
                     delete ptr;
                     sp<GraphicBufferSource> source = src.promote();
                     if (source != nullptr) {
@@ -170,12 +144,12 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
             return UNKNOWN_ERROR;
         }
 
-        mLastTimestamp.store(timestamp, std::memory_order_relaxed);
+        mLastTimestamp = timestamp;
 
         return OK;
     }
 
-    virtual status_t submitEos(int32_t /* bufferId */) override {
+    status_t submitEos(int32_t) override {
         std::shared_ptr<C2Component> comp = mComp.lock();
         if (!comp) {
             return NO_INIT;
@@ -183,10 +157,8 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
 
         std::unique_ptr<C2Work> work(new C2Work);
         work->input.flags = C2FrameData::FLAG_END_OF_STREAM;
-        work->input.ordinal.timestamp = mLastTimestamp.load(
-                std::memory_order_relaxed);
-        work->input.ordinal.frameIndex = mFrameIndex.fetch_add(
-                1, std::memory_order_relaxed);
+        work->input.ordinal.timestamp = mLastTimestamp;
+        work->input.ordinal.frameIndex = mFrameIndex++;
         work->input.buffers.clear();
         work->worklets.clear();
         work->worklets.emplace_back(new C2Worklet);
@@ -210,54 +182,43 @@ private:
     std::weak_ptr<C2Component> mComp;
 
     // Needed for ComponentWrapper implementation
-    std::mutex mAllocatorMutex;
+    int64_t mLastTimestamp;
     std::shared_ptr<C2Allocator> mAllocator;
-    std::atomic_int64_t mLastTimestamp;
     std::atomic_uint64_t mFrameIndex;
 };
 
 InputSurfaceConnection::InputSurfaceConnection(
-        const sp<GraphicBufferSource>& source,
-        const std::shared_ptr<C2Component>& comp) :
-    mSource(source),
-    mImpl(new Impl(source, comp)) {
+        const sp<GraphicBufferSource> &source,
+        const std::shared_ptr<C2Component> &comp)
+    : mSource(source),
+      mImpl(new Impl(source, comp)) {
 }
 
 InputSurfaceConnection::~InputSurfaceConnection() {
-    if (mSource) {
-        (void)mSource->stop();
-        (void)mSource->release();
-        mSource.clear();
-    }
-    mImpl.clear();
+    disconnect();
 }
 
 bool InputSurfaceConnection::init() {
-    std::lock_guard<std::mutex> lock(mMutex);
-    if (!mImpl) {
+    if (mImpl == nullptr) {
         return false;
     }
     return mImpl->init();
 }
 
-Return<Status> InputSurfaceConnection::disconnect() {
+void InputSurfaceConnection::disconnect() {
     ALOGV("disconnect");
-    mMutex.lock();
-    if (mSource) {
+    if (mSource != nullptr) {
         (void)mSource->stop();
         (void)mSource->release();
-        mSource.clear();
     }
     mImpl.clear();
-    mMutex.unlock();
+    mSource.clear();
     ALOGV("disconnected");
-    return Status::OK;
 }
 
-}  // namespace utils
+}  // namespace implementation
 }  // namespace V1_0
 }  // namespace c2
 }  // namespace media
-}  // namespace google
 }  // namespace hardware
-
+}  // namespace android
