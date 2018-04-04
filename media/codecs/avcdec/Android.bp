@@ -1,5 +1,6 @@
 cc_library_shared {
     name: "libstagefright_soft_c2avcdec",
+    vendor_available: true,
 
     static_libs: [
         "libavcdec",
@@ -19,7 +20,6 @@ cc_library_shared {
     shared_libs: [
         "liblog",
         "libutils",
-        "libmedia",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",

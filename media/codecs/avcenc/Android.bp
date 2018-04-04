@@ -1,9 +1,6 @@
 cc_library_shared {
     name: "libstagefright_soft_c2avcenc",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     static_libs: [ "libavcenc" ],
     srcs: ["C2SoftAvcEnc.cpp"],
@@ -16,12 +13,12 @@ cc_library_shared {
     ],
 
     shared_libs: [
+        "liblog",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libstagefright_simple_c2component",
         "libutils",
-        "liblog",
     ],
 
     sanitize: {

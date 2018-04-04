@@ -15,8 +15,9 @@
  */
 
 #ifndef INPUT_SURFACE_WRAPPER_H_
-
 #define INPUT_SURFACE_WRAPPER_H_
+
+#include <codec2/hidl/client.h>
 
 namespace android {
 
@@ -34,7 +35,8 @@ public:
      * \return OK               successfully connected to |comp|
      * \return ALREADY_EXISTS   already connected to another component.
      */
-    virtual status_t connect(const std::shared_ptr<C2Component> &comp) = 0;
+    virtual status_t connect(
+            const std::shared_ptr<Codec2Client::Component> &comp) = 0;
 
     /**
      * Disconnect the surface from the component if any.

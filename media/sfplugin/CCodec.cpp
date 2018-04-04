@@ -14,19 +14,23 @@
  * limitations under the License.
  */
 
-//#define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
 #define LOG_TAG "CCodec"
 #include <cutils/properties.h>
 #include <utils/Log.h>
 
 #include <thread>
 
+#include <C2ParamInternal.h>
 #include <C2PlatformSupport.h>
 #include <C2V4l2Support.h>
 
 #include <android/IOMXBufferSource.h>
+#include <android/IGraphicBufferSource.h>
 #include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
+#include <gui/IGraphicBufferProducer.h>
 #include <gui/Surface.h>
+#include <media/omx/1.0/WOmx.h>
 #include <media/stagefright/codec2/1.0/InputSurface.h>
 #include <media/stagefright/BufferProducerWrapper.h>
 #include <media/stagefright/PersistentSurface.h>
@@ -40,6 +44,7 @@ namespace android {
 
 using namespace std::chrono_literals;
 using ::android::hardware::graphics::bufferqueue::V1_0::utils::H2BGraphicBufferProducer;
+using BGraphicBufferSource = ::android::IGraphicBufferSource;
 
 namespace {
 
@@ -119,13 +124,13 @@ private:
 
 Mutexed<sp<CCodecWatchdog>> CCodecWatchdog::sInstance;
 
-class CCodecListener : public C2Component::Listener {
+class CCodecListener : public Codec2Client::Listener {
 public:
     explicit CCodecListener(const wp<CCodec> &codec) : mCodec(codec) {}
 
-    virtual void onWorkDone_nb(
-            std::weak_ptr<C2Component> component,
-            std::list<std::unique_ptr<C2Work>> workItems) override {
+    virtual void onWorkDone(
+            const std::weak_ptr<Codec2Client::Component>& component,
+            std::list<std::unique_ptr<C2Work>>& workItems) override {
         (void)component;
         sp<CCodec> codec(mCodec.promote());
         if (!codec) {
@@ -134,15 +139,17 @@ public:
         codec->onWorkDone(workItems);
     }
 
-    virtual void onTripped_nb(
-            std::weak_ptr<C2Component> component,
-            std::vector<std::shared_ptr<C2SettingResult>> settingResult) override {
+    virtual void onTripped(
+            const std::weak_ptr<Codec2Client::Component>& component,
+            const std::vector<std::shared_ptr<C2SettingResult>>& settingResult) override {
         // TODO
         (void)component;
         (void)settingResult;
     }
 
-    virtual void onError_nb(std::weak_ptr<C2Component> component, uint32_t errorCode) override {
+    virtual void onError(
+            const std::weak_ptr<Codec2Client::Component>& component,
+            uint32_t errorCode) override {
         // TODO
         (void)component;
         (void)errorCode;
@@ -154,39 +161,49 @@ private:
 
 class C2InputSurfaceWrapper : public InputSurfaceWrapper {
 public:
-    explicit C2InputSurfaceWrapper(const sp<InputSurface> &surface) : mSurface(surface) {}
+    explicit C2InputSurfaceWrapper(
+            const std::shared_ptr<Codec2Client::InputSurface> &surface) :
+        mSurface(surface) {
+    }
+
     ~C2InputSurfaceWrapper() override = default;
 
-    status_t connect(const std::shared_ptr<C2Component> &comp) override {
+    status_t connect(const std::shared_ptr<Codec2Client::Component> &comp) override {
         if (mConnection != nullptr) {
             return ALREADY_EXISTS;
         }
-        mConnection = mSurface->connectToComponent(comp);
-        return OK;
+        return static_cast<status_t>(
+                mSurface->connectToComponent(comp, &mConnection));
     }
 
     void disconnect() override {
         if (mConnection != nullptr) {
             mConnection->disconnect();
-            mConnection.clear();
+            mConnection = nullptr;
         }
     }
 
 private:
-    sp<InputSurface> mSurface;
-    sp<InputSurfaceConnection> mConnection;
+    std::shared_ptr<Codec2Client::InputSurface> mSurface;
+    std::shared_ptr<Codec2Client::InputSurfaceConnection> mConnection;
 };
 
 class GraphicBufferSourceWrapper : public InputSurfaceWrapper {
 public:
-    explicit GraphicBufferSourceWrapper(const sp<IGraphicBufferSource> &source) : mSource(source) {}
+//    explicit GraphicBufferSourceWrapper(const sp<BGraphicBufferSource> &source) : mSource(source) {}
+    GraphicBufferSourceWrapper(
+            const sp<BGraphicBufferSource> &source,
+            uint32_t width,
+            uint32_t height)
+        : mSource(source), mWidth(width), mHeight(height) {}
     ~GraphicBufferSourceWrapper() override = default;
 
-    status_t connect(const std::shared_ptr<C2Component> &comp) override {
+    status_t connect(const std::shared_ptr<Codec2Client::Component> &comp) override {
         // TODO: proper color aspect & dataspace
         android_dataspace dataSpace = HAL_DATASPACE_BT709;
 
         mNode = new C2OMXNode(comp);
+        mNode->setFrameSize(mWidth, mHeight);
         mSource->configure(mNode, dataSpace);
 
         // TODO: configure according to intf().
@@ -218,8 +235,10 @@ public:
     }
 
 private:
-    sp<IGraphicBufferSource> mSource;
+    sp<BGraphicBufferSource> mSource;
     sp<C2OMXNode> mNode;
+    uint32_t mWidth;
+    uint32_t mHeight;
 };
 
 }  // namespace
@@ -277,30 +296,24 @@ void CCodec::allocate(const sp<MediaCodecInfo> &codecInfo) {
     mListener.reset(new CCodecListener(this));
 
     AString componentName = codecInfo->getCodecName();
-    // TODO: use codecInfo->getOwnerName() for connecting to remote process.
-
-    std::shared_ptr<C2Component> comp;
-    c2_status_t err = GetCodec2PlatformComponentStore()->createComponent(
-            componentName.c_str(), &comp);
-    static bool v4l2Enabled =
-            property_get_bool("debug.stagefright.ccodec_v4l2", false);
-    if (err != C2_OK && v4l2Enabled) {
-        err = GetCodec2VDAComponentStore()->createComponent(
-                componentName.c_str(), &comp);
-    }
-    if (err != C2_OK) {
+    std::shared_ptr<Codec2Client> client;
+    std::shared_ptr<Codec2Client::Component> comp =
+            Codec2Client::CreateComponentByName(
+            componentName.c_str(),
+            mListener,
+            &client);
+    if (!comp) {
         ALOGE("Failed Create component: %s", componentName.c_str());
         Mutexed<State>::Locked state(mState);
         state->set(RELEASED);
         state.unlock();
-        mCallback->onError(err, ACTION_CODE_FATAL);
+        mCallback->onError(UNKNOWN_ERROR, ACTION_CODE_FATAL);
         state.lock();
         return;
     }
     ALOGV("Success Create component: %s", componentName.c_str());
-    comp->setListener_vb(mListener, C2_MAY_BLOCK);
     mChannel->setComponent(comp);
-    auto setAllocated = [this, comp] {
+    auto setAllocated = [this, comp, client] {
         Mutexed<State>::Locked state(mState);
         if (state->get() != ALLOCATING) {
             state->set(RELEASED);
@@ -308,12 +321,13 @@ void CCodec::allocate(const sp<MediaCodecInfo> &codecInfo) {
         }
         state->set(ALLOCATED);
         state->comp = comp;
+        mClient = client;
         return OK;
     };
     if (tryAndReportOnError(setAllocated) != OK) {
         return;
     }
-    mCallback->onComponentAllocated(comp->intf()->getName().c_str());
+    mCallback->onComponentAllocated(comp->getName().c_str());
 }
 
 void CCodec::initiateConfigureComponent(const sp<AMessage> &format) {
@@ -331,14 +345,14 @@ void CCodec::initiateConfigureComponent(const sp<AMessage> &format) {
 }
 
 void CCodec::configure(const sp<AMessage> &msg) {
-    std::shared_ptr<C2ComponentInterface> intf;
-    auto checkAllocated = [this, &intf] {
+    std::shared_ptr<Codec2Client::Component> comp;
+    auto checkAllocated = [this, &comp] {
         Mutexed<State>::Locked state(mState);
         if (state->get() != ALLOCATED) {
             state->set(RELEASED);
             return UNKNOWN_ERROR;
         }
-        intf = state->comp->intf();
+        comp = state->comp;
         return OK;
     };
     if (tryAndReportOnError(checkAllocated) != OK) {
@@ -347,7 +361,16 @@ void CCodec::configure(const sp<AMessage> &msg) {
 
     sp<AMessage> inputFormat(new AMessage);
     sp<AMessage> outputFormat(new AMessage);
-    auto doConfig = [=] {
+    std::vector<std::shared_ptr<C2ParamDescriptor>> paramDescs;
+
+    auto doConfig = [=, paramDescsPtr = &paramDescs] {
+        c2_status_t c2err = comp->querySupportedParams(paramDescsPtr);
+        if (c2err != C2_OK) {
+            ALOGD("Failed to query supported params");
+            // TODO: return error once we complete implementation.
+            // return UNKNOWN_ERROR;
+        }
+
         AString mime;
         if (!msg->findString("mime", &mime)) {
             return BAD_VALUE;
@@ -359,7 +382,7 @@ void CCodec::configure(const sp<AMessage> &msg) {
         }
 
         // TODO: read from intf()
-        if ((!encoder) != (intf->getName().find("encoder") == std::string::npos)) {
+        if ((!encoder) != (comp->getName().find("encoder") == std::string::npos)) {
             return UNKNOWN_ERROR;
         }
 
@@ -374,7 +397,7 @@ void CCodec::configure(const sp<AMessage> &msg) {
             C2PortMimeConfig::input::PARAM_TYPE,
             C2PortMimeConfig::output::PARAM_TYPE,
         };
-        c2_status_t c2err = intf->query_vb(
+        c2err = comp->query(
                 {},
                 indices,
                 C2_DONT_BLOCK,
@@ -396,28 +419,23 @@ void CCodec::configure(const sp<AMessage> &msg) {
 
         // XXX: hack
         bool audio = mime.startsWithIgnoreCase("audio/");
-        if (encoder) {
-            if (audio) {
+        if (!audio) {
+            int32_t tmp;
+            if (msg->findInt32("width", &tmp)) {
+                outputFormat->setInt32("width", tmp);
+            }
+            if (msg->findInt32("height", &tmp)) {
+                outputFormat->setInt32("height", tmp);
+            }
+        } else {
+            if (encoder) {
                 inputFormat->setInt32("channel-count", 1);
                 inputFormat->setInt32("sample-rate", 44100);
                 outputFormat->setInt32("channel-count", 1);
                 outputFormat->setInt32("sample-rate", 44100);
             } else {
-                outputFormat->setInt32("width", 1080);
-                outputFormat->setInt32("height", 1920);
-            }
-        } else {
-            if (audio) {
                 outputFormat->setInt32("channel-count", 2);
                 outputFormat->setInt32("sample-rate", 44100);
-            } else {
-                int32_t tmp;
-                if (msg->findInt32("width", &tmp)) {
-                    outputFormat->setInt32("width", tmp);
-                }
-                if (msg->findInt32("height", &tmp)) {
-                    outputFormat->setInt32("height", tmp);
-                }
             }
         }
 
@@ -434,6 +452,15 @@ void CCodec::configure(const sp<AMessage> &msg) {
         formats->inputFormat = inputFormat;
         formats->outputFormat = outputFormat;
     }
+    std::shared_ptr<C2ParamReflector> reflector = mClient->getParamReflector();
+    if (reflector != nullptr) {
+        Mutexed<ReflectedParamUpdater>::Locked paramUpdater(mParamUpdater);
+        paramUpdater->clear();
+        paramUpdater->addParamDesc(reflector, paramDescs);
+    } else {
+        ALOGE("Failed to get param reflector");
+        // TODO: report error once we complete implementation.
+    }
     mCallback->onComponentConfigured(inputFormat, outputFormat);
 }
 
@@ -444,7 +471,7 @@ void CCodec::initiateCreateInputSurface() {
             return UNKNOWN_ERROR;
         }
         // TODO: read it from intf() properly.
-        if (state->comp->intf()->getName().find("encoder") == std::string::npos) {
+        if (state->comp->getName().find("encoder") == std::string::npos) {
             return INVALID_OPERATION;
         }
         return OK;
@@ -458,24 +485,42 @@ void CCodec::initiateCreateInputSurface() {
 }
 
 void CCodec::createInputSurface() {
-    // TODO: get this from codec process
-    sp<InputSurface> surface(InputSurface::Create());
+    using namespace ::android::hardware::media::omx::V1_0;
+    sp<IOmx> tOmx = IOmx::getService("default");
+    if (tOmx == nullptr) {
+        ALOGE("Failed to create input surface");
+        mCallback->onInputSurfaceCreationFailed(UNKNOWN_ERROR);
+        return;
+    }
+    sp<IOMX> omx = new utils::LWOmx(tOmx);
 
-    // TODO: get proper error code.
-    status_t err = (surface == nullptr) ? UNKNOWN_ERROR : OK;
+    sp<IGraphicBufferProducer> bufferProducer;
+    sp<BGraphicBufferSource> bufferSource;
+    status_t err = omx->createInputSurface(&bufferProducer, &bufferSource);
+
     if (err != OK) {
-        ALOGE("Failed to initialize input surface: %d", err);
+        ALOGE("Failed to create input surface: %d", err);
         mCallback->onInputSurfaceCreationFailed(err);
         return;
     }
 
-    err = setupInputSurface(std::make_shared<C2InputSurfaceWrapper>(surface));
+#if 0
+    std::shared_ptr<Codec2Client::InputSurface> surface;
+
+    status_t err = static_cast<status_t>(mClient->createInputSurface(&surface));
     if (err != OK) {
-        ALOGE("Failed to set up input surface: %d", err);
+        ALOGE("Failed to create input surface: %d", static_cast<int>(err));
         mCallback->onInputSurfaceCreationFailed(err);
         return;
     }
+    if (!surface) {
+        ALOGE("Failed to create input surface: null input surface");
+        mCallback->onInputSurfaceCreationFailed(UNKNOWN_ERROR);
+        return;
+    }
+#endif
 
+//    err = setupInputSurface(std::make_shared<C2InputSurfaceWrapper>(surface));
     sp<AMessage> inputFormat;
     sp<AMessage> outputFormat;
     {
@@ -483,10 +528,21 @@ void CCodec::createInputSurface() {
         inputFormat = formats->inputFormat;
         outputFormat = formats->outputFormat;
     }
+    int32_t width = 0;
+    (void)outputFormat->findInt32("width", &width);
+    int32_t height = 0;
+    (void)outputFormat->findInt32("height", &height);
+    err = setupInputSurface(std::make_shared<GraphicBufferSourceWrapper>(
+            bufferSource, width, height));
+    if (err != OK) {
+        ALOGE("Failed to set up input surface: %d", err);
+        mCallback->onInputSurfaceCreationFailed(err);
+        return;
+    }
     mCallback->onInputSurfaceCreated(
             inputFormat,
             outputFormat,
-            new BufferProducerWrapper(new H2BGraphicBufferProducer(surface)));
+            new BufferProducerWrapper(bufferProducer));
 }
 
 status_t CCodec::setupInputSurface(const std::shared_ptr<InputSurfaceWrapper> &surface) {
@@ -506,20 +562,23 @@ void CCodec::initiateSetInputSurface(const sp<PersistentSurface> &surface) {
 }
 
 void CCodec::setInputSurface(const sp<PersistentSurface> &surface) {
-    status_t err = setupInputSurface(std::make_shared<GraphicBufferSourceWrapper>(
-            surface->getBufferSource()));
-    if (err != OK) {
-        ALOGE("Failed to set up input surface: %d", err);
-        mCallback->onInputSurfaceDeclined(err);
-        return;
-    }
-
     sp<AMessage> inputFormat;
     sp<AMessage> outputFormat;
     {
         Mutexed<Formats>::Locked formats(mFormats);
         inputFormat = formats->inputFormat;
         outputFormat = formats->outputFormat;
+    }
+    int32_t width = 0;
+    (void)outputFormat->findInt32("width", &width);
+    int32_t height = 0;
+    (void)outputFormat->findInt32("height", &height);
+    status_t err = setupInputSurface(std::make_shared<GraphicBufferSourceWrapper>(
+            surface->getBufferSource(), width, height));
+    if (err != OK) {
+        ALOGE("Failed to set up input surface: %d", err);
+        mCallback->onInputSurfaceDeclined(err);
+        return;
     }
     mCallback->onInputSurfaceAccepted(inputFormat, outputFormat);
 }
@@ -541,7 +600,7 @@ void CCodec::initiateStart() {
 }
 
 void CCodec::start() {
-    std::shared_ptr<C2Component> comp;
+    std::shared_ptr<Codec2Client::Component> comp;
     auto checkStarting = [this, &comp] {
         Mutexed<State>::Locked state(mState);
         if (state->get() != STARTING) {
@@ -615,7 +674,7 @@ void CCodec::initiateStop() {
 }
 
 void CCodec::stop() {
-    std::shared_ptr<C2Component> comp;
+    std::shared_ptr<Codec2Client::Component> comp;
     {
         Mutexed<State>::Locked state(mState);
         if (state->get() == RELEASING) {
@@ -677,7 +736,7 @@ void CCodec::initiateRelease(bool sendCallback /* = true */) {
 }
 
 void CCodec::release(bool sendCallback) {
-    std::shared_ptr<C2Component> comp;
+    std::shared_ptr<Codec2Client::Component> comp;
     {
         Mutexed<State>::Locked state(mState);
         if (state->get() == RELEASED) {
@@ -734,7 +793,7 @@ void CCodec::signalFlush() {
 }
 
 void CCodec::flush() {
-    std::shared_ptr<C2Component> comp;
+    std::shared_ptr<Codec2Client::Component> comp;
     auto checkFlushing = [this, &comp] {
         Mutexed<State>::Locked state(mState);
         if (state->get() != FLUSHING) {
@@ -750,7 +809,7 @@ void CCodec::flush() {
     mChannel->stop();
 
     std::list<std::unique_ptr<C2Work>> flushedWork;
-    c2_status_t err = comp->flush_sm(C2Component::FLUSH_COMPONENT, &flushedWork);
+    c2_status_t err = comp->flush(C2Component::FLUSH_COMPONENT, &flushedWork);
     if (err != C2_OK) {
         // TODO: convert err into status_t
         mCallback->onError(UNKNOWN_ERROR, ACTION_CODE_FATAL);
@@ -792,9 +851,66 @@ void CCodec::signalResume() {
     }
 }
 
-void CCodec::signalSetParameters(const sp<AMessage> &msg) {
-    // TODO
-    (void) msg;
+void CCodec::signalSetParameters(const sp<AMessage> &params) {
+    sp<AMessage> msg = new AMessage(kWhatSetParameters, this);
+    msg->setMessage("params", params);
+    msg->post();
+}
+
+void CCodec::setParameters(const sp<AMessage> &params) {
+    class MyParam : public C2Param {
+    public:
+        inline MyParam(uint32_t size, Index index) : C2Param(size, index) {}
+    };
+
+    std::shared_ptr<Codec2Client::Component> comp;
+    auto checkState = [this, &comp] {
+        Mutexed<State>::Locked state(mState);
+        if (state->get() == RELEASED) {
+            return INVALID_OPERATION;
+        }
+        comp = state->comp;
+        return OK;
+    };
+    if (tryAndReportOnError(checkState) != OK) {
+        return;
+    }
+
+    // TODO: ACodec backward-compatibility
+
+    c2_status_t err = C2_OK;
+    std::vector<std::unique_ptr<C2Param>> vec;
+    {
+        Mutexed<ReflectedParamUpdater>::Locked paramUpdater(mParamUpdater);
+        std::vector<C2Param::Index> indices;
+        paramUpdater->getParamIndicesFromMessage(params, &indices);
+
+        paramUpdater.unlock();
+        if (indices.empty()) {
+            ALOGD("no recognized params in: %s", params->debugString().c_str());
+            return;
+        }
+        err = comp->query({}, indices, C2_MAY_BLOCK, &vec);
+        if (err != C2_OK) {
+            ALOGD("query failed with %d", err);
+            // This is non-fatal.
+            return;
+        }
+        paramUpdater.lock();
+
+        paramUpdater->updateParamsFromMessage(params, &vec);
+    }
+
+    std::vector<C2Param *> paramVector;
+    for (const std::unique_ptr<C2Param> &param : vec) {
+        paramVector.push_back(param.get());
+    }
+    std::vector<std::unique_ptr<C2SettingResult>> failures;
+    err = comp->config(paramVector, C2_MAY_BLOCK, &failures);
+    if (err != C2_OK) {
+        ALOGD("config failed with %d", err);
+        // This is non-fatal.
+    }
 }
 
 void CCodec::signalEndOfInputStream() {
@@ -829,6 +945,7 @@ void CCodec::onMessageReceived(const sp<AMessage> &msg) {
             sp<AMessage> format;
             CHECK(msg->findMessage("format", &format));
             configure(format);
+            setParameters(format);
             break;
         }
         case kWhatStart: {
@@ -862,6 +979,13 @@ void CCodec::onMessageReceived(const sp<AMessage> &msg) {
             CHECK(msg->findObject("surface", &obj));
             sp<PersistentSurface> surface(static_cast<PersistentSurface *>(obj.get()));
             setInputSurface(surface);
+            break;
+        }
+        case kWhatSetParameters: {
+            setDeadline(now + 50ms, "setParameters");
+            sp<AMessage> params;
+            CHECK(msg->findMessage("params", &params));
+            setParameters(params);
             break;
         }
         case kWhatWorkDone: {
@@ -914,3 +1038,4 @@ void CCodec::initiateReleaseIfStuck() {
 extern "C" android::CodecBase *CreateCodec() {
     return new android::CCodec;
 }
+

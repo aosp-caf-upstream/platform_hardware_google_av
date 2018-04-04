@@ -277,9 +277,12 @@ C2AllocationGralloc::~C2AllocationGralloc() {
 c2_status_t C2AllocationGralloc::map(
         C2Rect rect, C2MemoryUsage usage, C2Fence *fence,
         C2PlanarLayout *layout /* nonnull */, uint8_t **addr /* nonnull */) {
+    uint64_t grallocUsage = static_cast<C2AndroidMemoryUsage>(usage).asGrallocUsage();
+    ALOGV("mapping buffer with usage %#llx => %#llx",
+          (long long)usage.expected, (long long)grallocUsage);
+
     // TODO
     (void) fence;
-    (void) usage;
 
     if (mBuffer && mLocked) {
         return C2_DUPLICATE;
@@ -313,8 +316,7 @@ c2_status_t C2AllocationGralloc::map(
         case PixelFormat::YV12: {
             YCbCrLayout ycbcrLayout;
             mMapper->lockYCbCr(
-                    const_cast<native_handle_t *>(mBuffer),
-                    BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN,
+                    const_cast<native_handle_t *>(mBuffer), grallocUsage,
                     { (int32_t)rect.left, (int32_t)rect.top, (int32_t)rect.width, (int32_t)rect.height },
                     // TODO: fence
                     hidl_handle(),
@@ -393,7 +395,7 @@ c2_status_t C2AllocationGralloc::map(
             void *pointer = nullptr;
             mMapper->lock(
                     const_cast<native_handle_t *>(mBuffer),
-                    BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN,
+                    grallocUsage,
                     { (int32_t)rect.left, (int32_t)rect.top, (int32_t)rect.width, (int32_t)rect.height },
                     // TODO: fence
                     hidl_handle(),
@@ -523,6 +525,12 @@ private:
     sp<IMapper> mMapper;
 };
 
+void _UnwrapNativeCodec2GrallocMetadata(
+        const C2Handle *const handle,
+        uint32_t *width, uint32_t *height, uint32_t *format, uint64_t *usage, uint32_t *stride) {
+    (void)C2HandleGralloc::Import(handle, width, height, format, usage, stride);
+}
+
 C2AllocatorGralloc::Impl::Impl(id_t id) : mInit(C2_OK) {
     // TODO: get this from allocator
     C2MemoryUsage minUsage = { 0, 0 }, maxUsage = { ~(uint64_t)0, ~(uint64_t)0 };
@@ -540,8 +548,9 @@ C2AllocatorGralloc::Impl::Impl(id_t id) : mInit(C2_OK) {
 c2_status_t C2AllocatorGralloc::Impl::newGraphicAllocation(
         uint32_t width, uint32_t height, uint32_t format, const C2MemoryUsage &usage,
         std::shared_ptr<C2GraphicAllocation> *allocation) {
-    // TODO: buffer usage should be determined according to |usage|
-    (void) usage;
+    uint64_t grallocUsage = static_cast<C2AndroidMemoryUsage>(usage).asGrallocUsage();
+    ALOGV("allocating buffer with usage %#llx => %#llx",
+          (long long)usage.expected, (long long)grallocUsage);
 
     BufferDescriptorInfo info = {
         {
@@ -549,7 +558,7 @@ c2_status_t C2AllocatorGralloc::Impl::newGraphicAllocation(
             height,
             1u,  // layerCount
             (PixelFormat)format,
-            BufferUsage::CPU_READ_OFTEN | BufferUsage::CPU_WRITE_OFTEN,
+            grallocUsage,
         },
         0u,  // stride placeholder
     };

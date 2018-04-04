@@ -1,9 +1,6 @@
 cc_library_shared {
     name: "libstagefright_soft_c2vp9dec",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     srcs: ["C2SoftVpx.cpp"],
 
@@ -11,11 +8,11 @@ cc_library_shared {
 
     shared_libs: [
         "liblog",
-        "libutils",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libstagefright_simple_c2component",
+        "libutils",
     ],
 
     cflags: [
@@ -40,10 +37,7 @@ cc_library_shared {
 
 cc_library_shared {
     name: "libstagefright_soft_c2vp8dec",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     srcs: ["C2SoftVpx.cpp"],
 
@@ -51,11 +45,11 @@ cc_library_shared {
 
     shared_libs: [
         "liblog",
-        "libutils",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libstagefright_simple_c2component",
+        "libutils",
     ],
 
     cflags: [

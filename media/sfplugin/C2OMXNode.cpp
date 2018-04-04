@@ -49,7 +49,9 @@ public:
 
 }  // namespace
 
-C2OMXNode::C2OMXNode(const std::shared_ptr<C2Component> &comp) : mComp(comp) {}
+C2OMXNode::C2OMXNode(const std::shared_ptr<Codec2Client::Component> &comp) :
+    mComp(comp), mFrameIndex(0), mWidth(0), mHeight(0) {
+}
 
 status_t C2OMXNode::freeNode() {
     mComp.reset();
@@ -80,8 +82,8 @@ status_t C2OMXNode::getParameter(OMX_INDEXTYPE index, void *params, size_t size)
             // TODO: read these from intf()
             pDef->nBufferCountActual = 16;
             pDef->eDomain = OMX_PortDomainVideo;
-            pDef->format.video.nFrameWidth = 1080;
-            pDef->format.video.nFrameHeight = 1920;
+            pDef->format.video.nFrameWidth = mWidth;
+            pDef->format.video.nFrameHeight = mHeight;
             err = OK;
             break;
         }
@@ -196,7 +198,7 @@ status_t C2OMXNode::emptyBuffer(
         sp<Fence> fence = new Fence(fenceFd);
         fence->waitForever(LOG_TAG);
     }
-    std::shared_ptr<C2Component> comp = mComp.lock();
+    std::shared_ptr<Codec2Client::Component> comp = mComp.lock();
     if (!comp) {
         return NO_INIT;
     }
@@ -247,7 +249,7 @@ status_t C2OMXNode::emptyBuffer(
     std::list<std::unique_ptr<C2Work>> items;
     items.push_back(std::move(work));
 
-    c2_status_t err = comp->queue_nb(&items);
+    c2_status_t err = comp->queue(&items);
     if (err != C2_OK) {
         return UNKNOWN_ERROR;
     }
@@ -275,6 +277,11 @@ status_t C2OMXNode::dispatchMessage(const omx_message& msg) {
 
 sp<IOMXBufferSource> C2OMXNode::getSource() {
     return mBufferSource;
+}
+
+void C2OMXNode::setFrameSize(uint32_t width, uint32_t height) {
+    mWidth = width;
+    mHeight = height;
 }
 
 }  // namespace android

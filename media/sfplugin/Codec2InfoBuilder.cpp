@@ -18,6 +18,8 @@
 #define LOG_TAG "Codec2InfoBuilder"
 #include <log/log.h>
 
+#include <codec2/hidl/client.h>
+
 #include <C2Component.h>
 #include <C2PlatformSupport.h>
 #include <C2V4l2Support.h>
@@ -30,7 +32,7 @@
 
 namespace android {
 
-using ConstTraitsPtr = std::shared_ptr<const C2Component::Traits>;
+using Traits = C2Component::Traits;
 
 struct ProfileLevel {
     uint32_t profile;
@@ -90,25 +92,8 @@ static const ProfileLevel kAvcProfileLevels[] = {
 };
 
 status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
-    // Obtain C2ComponentStore
-    std::shared_ptr<C2ComponentStore> store = GetCodec2PlatformComponentStore();
-    if (store == nullptr) {
-        ALOGE("Cannot find a component store.");
-        return NO_INIT;
-    }
-
-    std::vector<ConstTraitsPtr> traits = store->listComponents();
-
-    if (property_get_bool("debug.stagefright.ccodec_v4l2", false)) {
-        std::shared_ptr<C2ComponentStore> v4l2Store = GetCodec2VDAComponentStore();
-        if (v4l2Store == nullptr) {
-            ALOGD("Cannot find a V4L2 component store.");
-            // non-fatal.
-        } else {
-            std::vector<ConstTraitsPtr> v4l2Traits = v4l2Store->listComponents();
-            traits.insert(traits.end(), v4l2Traits.begin(), v4l2Traits.end());
-        }
-    }
+    // Obtain Codec2Client
+    std::vector<Traits> traits = Codec2Client::ListComponents();
 
     MediaCodecsXmlParser parser(
             MediaCodecsXmlParser::defaultSearchDirs,
@@ -117,19 +102,19 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
         ALOGD("XML parser no good");
         return OK;
     }
-    for (const ConstTraitsPtr &trait : traits) {
-        if (parser.getCodecMap().count(trait->name.c_str()) == 0) {
-            ALOGD("%s not found in xml", trait->name.c_str());
+    for (const Traits& trait : traits) {
+        if (parser.getCodecMap().count(trait.name.c_str()) == 0) {
+            ALOGD("%s not found in xml", trait.name.c_str());
             continue;
         }
-        const MediaCodecsXmlParser::CodecProperties &codec = parser.getCodecMap().at(trait->name);
+        const MediaCodecsXmlParser::CodecProperties &codec = parser.getCodecMap().at(trait.name);
         std::unique_ptr<MediaCodecInfoWriter> codecInfo = writer->addMediaCodecInfo();
-        codecInfo->setName(trait->name.c_str());
+        codecInfo->setName(trait.name.c_str());
         codecInfo->setOwner("dummy");
-        // TODO: get this from trait->kind
-        bool encoder = (trait->name.find("encoder") != std::string::npos);
+        // TODO: get this from trait.kind
+        bool encoder = (trait.name.find("encoder") != std::string::npos);
         codecInfo->setEncoder(encoder);
-        codecInfo->setRank(trait->rank);
+        codecInfo->setRank(trait.rank);
         for (auto typeIt = codec.typeMap.begin(); typeIt != codec.typeMap.end(); ++typeIt) {
             const std::string &mediaType = typeIt->first;
             const MediaCodecsXmlParser::AttributeMap &attrMap = typeIt->second;
@@ -151,8 +136,11 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
                 }
             }
             // TODO: get this from intf().
-            if (mediaType.find("video") != std::string::npos && !encoder) {
+            if (mediaType.find("video") != std::string::npos) {
                 caps->addColorFormat(0x7F420888);  // COLOR_FormatYUV420Flexible
+                if (encoder || mediaType.find("google") == std::string::npos) {
+                    caps->addColorFormat(0x7F000789);  // COLOR_FormatSurface
+                }
             }
         }
     }
@@ -164,3 +152,4 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
 extern "C" android::MediaCodecListBuilderBase *CreateBuilder() {
     return new android::Codec2InfoBuilder;
 }
+

@@ -153,7 +153,13 @@ Return<void> ComponentStore::createComponent(
             status = Status::CORRUPTED;
         } else {
             std::lock_guard<std::mutex> lock(mComponentRosterMutex);
-            mComponentRoster[toBinder(component)] = c2component;
+            auto emplaceResult =
+                    mComponentRoster.emplace(toBinder(component), c2component);
+            if (!emplaceResult.second) {
+                status = Status::CORRUPTED;
+            } else {
+                component->setLocalId(emplaceResult.first);
+            }
         }
     }
     _hidl_cb(status, component);
@@ -207,7 +213,7 @@ Return<void> ComponentStore::getStructDescriptors(
         getStructDescriptors_cb _hidl_cb) {
     hidl_vec<StructDescriptor> descriptors(indices.size());
     size_t dstIx = 0;
-    Status res;
+    Status res = Status::OK;
     for (size_t srcIx = 0; srcIx < indices.size(); ++srcIx) {
         std::lock_guard<std::mutex> lock(mStructDescriptorsMutex);
         const auto item = mStructDescriptors.find(
@@ -244,14 +250,10 @@ void ComponentStore::reportComponentDeath(
 }
 
 std::shared_ptr<C2Component> ComponentStore::findC2Component(
-        const wp<IBinder>& binder) {
+        const wp<IBinder>& binder) const {
     std::lock_guard<std::mutex> lock(mComponentRosterMutex);
     Component::LocalId it = mComponentRoster.find(binder);
     if (it == mComponentRoster.end()) {
-        return std::shared_ptr<C2Component>();
-    }
-    if (it->first.promote() == nullptr) {
-        mComponentRoster.erase(it);
         return std::shared_ptr<C2Component>();
     }
     return it->second.lock();

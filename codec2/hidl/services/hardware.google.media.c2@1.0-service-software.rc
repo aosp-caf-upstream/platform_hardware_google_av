@@ -1,7 +1,6 @@
-service hardware-google-media-c2-system-hal-1-0 /system/bin/hw/hardware.google.media.c2@1.0-service-system
+service hardware-google-media-c2-software-hal-1-0 /vendor/bin/hw/hardware.google.media.c2@1.0-service-software
     class hal
     user media
     group mediadrm drmrpc
     ioprio rt 4
     writepid /dev/cpuset/foreground/tasks
-

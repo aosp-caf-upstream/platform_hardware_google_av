@@ -111,10 +111,8 @@ Status objcpy(
         const C2StructDescriptor& s);
 
 // StructDescriptor -> C2StructDescriptor
-// TODO: This cannot be implemented yet because C2StructDescriptor does not
-// allow dynamic construction/modification.
 c2_status_t objcpy(
-        C2StructDescriptor* d,
+        std::unique_ptr<C2StructDescriptor>* d,
         const StructDescriptor& s);
 
 // std::list<std::unique_ptr<C2Work>> -> WorkBundle

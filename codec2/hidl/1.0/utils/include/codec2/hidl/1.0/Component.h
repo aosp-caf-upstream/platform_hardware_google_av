@@ -68,15 +68,19 @@ struct Component : public Configurable<IComponent> {
             const sp<IComponentListener>& listener,
             const sp<ComponentStore>& store);
 
+    typedef ::android::hardware::graphics::bufferqueue::V1_0::
+            IGraphicBufferProducer HGraphicBufferProducer;
+
     // Methods from gIComponent follow.
     virtual Return<Status> queue(const WorkBundle& workBundle) override;
     virtual Return<void> flush(flush_cb _hidl_cb) override;
     virtual Return<Status> drain(bool withEos) override;
+    virtual Return<Status> setOutputSurface(
+            const sp<HGraphicBufferProducer>& surface) override;
     virtual Return<Status> connectToInputSurface(
             const sp<IInputSurface>& surface) override;
     virtual Return<Status> connectToOmxInputSurface(
-            const sp<::android::hardware::graphics::bufferqueue::V1_0::
-            IGraphicBufferProducer>& producer,
+            const sp<HGraphicBufferProducer>& producer,
             const sp<::android::hardware::media::omx::V1_0::
             IGraphicBufferSource>& source) override;
     virtual Return<Status> disconnectFromInputSurface() override;

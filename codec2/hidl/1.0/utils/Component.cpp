@@ -50,7 +50,8 @@ struct CompIntf : public ConfigurableC2Intf {
     virtual c2_status_t query(
             const std::vector<C2Param::Index>& indices,
             c2_blocking_t mayBlock,
-            std::vector<std::unique_ptr<C2Param>>* const params) const override {
+            std::vector<std::unique_ptr<C2Param>>* const params
+            ) const override {
         ALOGV("query");
         return mIntf->query_vb({}, indices, mayBlock, params);
     }
@@ -115,7 +116,8 @@ struct Listener : public C2Component::Listener {
             for (const std::shared_ptr<C2SettingResult> &c2result :
                     c2settingResult) {
                 if (c2result) {
-                    if (objcpy(&settingResults[ix++], *c2result) != Status::OK) {
+                    if (objcpy(&settingResults[ix++], *c2result) !=
+                            Status::OK) {
                         break;
                     }
                 }
@@ -207,21 +209,28 @@ Return<Status> Component::drain(bool withEos) {
             C2Component::DRAIN_COMPONENT_NO_EOS));
 }
 
-Return<Status> Component::connectToInputSurface(const sp<IInputSurface>& surface) {
+Return<Status> Component::setOutputSurface(
+        const sp<HGraphicBufferProducer>& surface) {
     // TODO implement
     (void)surface;
-    return Status::OK;
+    return Status::OMITTED;
+}
+
+Return<Status> Component::connectToInputSurface(
+        const sp<IInputSurface>& surface) {
+    // TODO implement
+    (void)surface;
+    return Status::OMITTED;
 }
 
 Return<Status> Component::connectToOmxInputSurface(
-        const sp<::android::hardware::graphics::bufferqueue::V1_0::
-        IGraphicBufferProducer>& producer,
+        const sp<HGraphicBufferProducer>& producer,
         const sp<::android::hardware::media::omx::V1_0::
         IGraphicBufferSource>& source) {
     // TODO implement
     (void)producer;
     (void)source;
-    return Status::OK;
+    return Status::OMITTED;
 }
 
 Return<Status> Component::disconnectFromInputSurface() {
@@ -229,10 +238,12 @@ Return<Status> Component::disconnectFromInputSurface() {
     return Status::OK;
 }
 
-Return<void> Component::createBlockPool(uint32_t allocatorId, createBlockPool_cb _hidl_cb) {
+Return<void> Component::createBlockPool(
+        uint32_t allocatorId,
+        createBlockPool_cb _hidl_cb) {
     // TODO implement
     (void)allocatorId;
-    _hidl_cb(Status::OK, 0 /* blockPoolId */, nullptr /* configurable */);
+    _hidl_cb(Status::OMITTED, 0 /* blockPoolId */, nullptr /* configurable */);
     return Void();
 }
 

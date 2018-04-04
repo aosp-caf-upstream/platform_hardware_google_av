@@ -65,7 +65,7 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
     Impl(
             const sp<GraphicBufferSource>& source,
             const std::shared_ptr<C2Component>& comp) :
-        mSource(source), mComp(comp) {
+        mSource(source), mComp(comp), mFrameIndex(0) {
     }
 
     virtual ~Impl() = default;

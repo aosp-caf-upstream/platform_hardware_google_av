@@ -1,9 +1,6 @@
 cc_library_shared {
     name: "libstagefright_soft_c2mp3dec",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     srcs: ["C2SoftMP3.cpp"],
 
@@ -29,10 +26,10 @@ cc_library_shared {
 
     shared_libs: [
         "liblog",
-        "libutils",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libstagefright_simple_c2component",
+        "libutils",
     ],
 }
