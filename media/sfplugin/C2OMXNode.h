@@ -22,6 +22,7 @@
 #include <android/IOMXBufferSource.h>
 #include <media/IOMX.h>
 #include <media/OMXBuffer.h>
+#include <codec2/hidl/client.h>
 
 namespace android {
 
@@ -32,8 +33,7 @@ namespace android {
  * to work in any other usage than IGraphicBufferSource.
  */
 struct C2OMXNode : public BnOMXNode {
-    // TODO: this should take android::hardware::media::c2::V1_0::IComponent
-    explicit C2OMXNode(const std::shared_ptr<C2Component> &comp);
+    explicit C2OMXNode(const std::shared_ptr<Codec2Client::Component> &comp);
     ~C2OMXNode() override = default;
 
     // IOMXNode
@@ -76,12 +76,15 @@ struct C2OMXNode : public BnOMXNode {
     status_t dispatchMessage(const omx_message &msg) override;
 
     sp<IOMXBufferSource> getSource();
+    void setFrameSize(uint32_t width, uint32_t height);
 
 private:
-    std::weak_ptr<C2Component> mComp;
+    std::weak_ptr<Codec2Client::Component> mComp;
     sp<IOMXBufferSource> mBufferSource;
     std::shared_ptr<C2Allocator> mAllocator;
     std::atomic_uint64_t mFrameIndex;
+    uint32_t mWidth;
+    uint32_t mHeight;
 };
 
 }  // namespace android

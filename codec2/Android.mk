@@ -40,3 +40,5 @@ docs-internal: $(C2_OUT_TEMP)/doxy-internal.config check-doxygen
 	$(C2_DOXY) $(C2_OUT_TEMP)/doxy-internal.config
 
 docs-all: docs-api docs-internal
+
+include $(call all-makefiles-under,$(call my-dir))

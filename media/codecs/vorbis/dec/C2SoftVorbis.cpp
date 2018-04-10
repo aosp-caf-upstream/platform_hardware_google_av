@@ -66,8 +66,17 @@ c2_status_t C2SoftVorbis::onInit() {
 }
 
 c2_status_t C2SoftVorbis::onStop() {
-    if (mState) vorbis_dsp_clear(mState);
-    if (mVi) vorbis_info_clear(mVi);
+    if (mState) {
+        vorbis_dsp_clear(mState);
+        delete mState;
+        mState = nullptr;
+    }
+
+    if (mVi) {
+        vorbis_info_clear(mVi);
+        delete mVi;
+        mVi = nullptr;
+    }
     mNumFramesLeftOnPage = -1;
     mNumChannels = 1;
     mSamplingRate = 48000;

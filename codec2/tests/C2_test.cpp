@@ -21,8 +21,6 @@
 
 #include <C2.h>
 
-namespace android {
-
 /* ======================================= STATIC TESTS ======================================= */
 
 template<int N>
@@ -159,4 +157,3 @@ TEST_F(C2Test, CounterTest) {
     EXPECT_EQ(c32_a *= c32_a, c2_cntr32_t(64));
 }
 
-} // namespace android

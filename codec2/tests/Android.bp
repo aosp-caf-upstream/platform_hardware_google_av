@@ -7,7 +7,6 @@ cc_test {
 
     srcs: [
         "C2Param_test.cpp",
-        "vndk/C2UtilTest.cpp",
     ],
 
     include_dirs: [
@@ -37,8 +36,10 @@ cc_test {
     ],
 
     srcs: [
-        "vndk/C2BufferTest.cpp",
         "C2_test.cpp",
+        "C2SampleComponent_test.cpp",
+        "vndk/C2BufferTest.cpp",
+        "vndk/C2UtilTest.cpp",
     ],
 
     include_dirs: [

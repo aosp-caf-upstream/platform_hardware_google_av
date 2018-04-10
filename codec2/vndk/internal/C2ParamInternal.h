@@ -40,8 +40,24 @@ struct C2_HIDE _C2ParamInspector {
         return pf._mFieldId._mSize;
     }
 
+    inline static uint32_t GetOffset(const _C2FieldId &f) {
+        return f._mOffset;
+    }
+
+    inline static uint32_t GetSize(const _C2FieldId &f) {
+        return f._mSize;
+    }
+
+    inline static _C2FieldId GetField(const C2FieldDescriptor &fd) {
+        return fd._mFieldId;
+    }
+
     inline static uint32_t GetAttrib(const C2ParamDescriptor &pd) {
         return pd._mAttrib;
+    }
+
+    inline static _C2FieldId GetField(const C2ParamField &pf) {
+        return pf._mFieldId;
     }
 
     inline static
@@ -52,6 +68,17 @@ struct C2_HIDE _C2ParamInspector {
     inline static
     C2ParamField CreateParamField(C2Param::Index index, _C2FieldId field) {
         return C2ParamField(index, field._mOffset, field._mSize);
+    }
+
+    inline static void AddNamedValues(
+            C2FieldDescriptor &fd, C2FieldDescriptor::NamedValuesType &&namedValues) {
+        fd._mNamedValues = std::move(namedValues);
+    }
+
+    inline static
+    C2StructDescriptor CreateStructDescriptor(C2Param::CoreIndex index,
+                                        std::vector<C2FieldDescriptor> &&fields) {
+        return C2StructDescriptor(index, std::move(fields));
     }
 
     // expose attributes

@@ -26,6 +26,7 @@
 #include <C2Buffer.h>
 #include <C2Component.h>
 
+#include <codec2/hidl/client.h>
 #include <media/stagefright/bqhelper/GraphicBufferSource.h>
 #include <media/stagefright/codec2/1.0/InputSurface.h>
 #include <media/stagefright/foundation/Mutexed.h>
@@ -35,9 +36,6 @@
 #include "InputSurfaceWrapper.h"
 
 namespace android {
-
-using ::android::hardware::media::c2::V1_0::implementation::InputSurface;
-using ::android::hardware::media::c2::V1_0::implementation::InputSurfaceConnection;
 
 /**
  * BufferChannelBase implementation for CCodec.
@@ -71,7 +69,7 @@ public:
     /**
      * Set the component object for buffer processing.
      */
-    void setComponent(const std::shared_ptr<C2Component> &component);
+    void setComponent(const std::shared_ptr<Codec2Client::Component> &component);
 
     /**
      * Set output graphic surface for rendering.
@@ -169,7 +167,7 @@ private:
     sp<IMemory> mDecryptDestination;
     int32_t mHeapSeqNum;
 
-    std::shared_ptr<C2Component> mComponent;
+    std::shared_ptr<Codec2Client::Component> mComponent;
     std::function<void(status_t, enum ActionCode)> mOnError;
     std::shared_ptr<C2BlockPool> mInputAllocator;
     QueueSync mQueueSync;

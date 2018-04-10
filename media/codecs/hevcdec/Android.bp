@@ -1,9 +1,6 @@
 cc_library_shared {
     name: "libstagefright_soft_c2hevcdec",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     srcs: ["C2SoftHevcDec.cpp"],
 
@@ -32,7 +29,6 @@ cc_library_shared {
     shared_libs: [
         "liblog",
         "libutils",
-        "libmedia",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",

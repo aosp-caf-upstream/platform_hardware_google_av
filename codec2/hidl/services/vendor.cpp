@@ -17,14 +17,19 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "hardware.google.media.c2@1.0-service"
 
+// Vendor's TODO: Remove this when V4L2 service is removed. (See below.)
+// The dependency on libv4l2_c2componentstore should be removed as well.
+#include <C2V4l2Support.h>
+
+// Vendor's TODO: Remove this if property_get_bool is removed. (See below.)
+// The dependency on libcutils should be removed as well.
+#include <cutils/properties.h>
+
 #include <codec2/hidl/1.0/ComponentStore.h>
 #include <hidl/HidlTransportSupport.h>
 #include <minijail.h>
 
 #include <C2Component.h>
-
-// TODO: Remove this once "setenv()" call is removed.
-#include <stdlib.h>
 
 // This is created by module "codec2.vendor.base.policy". This can be modified.
 static constexpr char kBaseSeccompPolicyPath[] =
@@ -34,7 +39,6 @@ static constexpr char kBaseSeccompPolicyPath[] =
 static constexpr char kExtSeccompPolicyPath[] =
         "/vendor/etc/seccomp_policy/codec2.vendor.ext.policy";
 
-// TODO: Replace with a valid C2ComponentStore implementation.
 class DummyC2Store : public C2ComponentStore {
 public:
     DummyC2Store() = default;
@@ -99,9 +103,6 @@ public:
 int main(int /* argc */, char** /* argv */) {
     ALOGD("hardware.google.media.c2@1.0-service starting...");
 
-    // TODO: Remove this when all the build settings and sepolicies are in place.
-    setenv("TREBLE_TESTING_OVERRIDE", "true", true);
-
     signal(SIGPIPE, SIG_IGN);
     android::SetUpMinijail(kBaseSeccompPolicyPath, kExtSeccompPolicyPath);
 
@@ -112,11 +113,21 @@ int main(int /* argc */, char** /* argv */) {
     // Create IComponentStore service.
     {
         using namespace ::hardware::google::media::c2::V1_0;
-        android::sp<IComponentStore> store =
-                new utils::ComponentStore(
-                // TODO: Replace this with a valid C2ComponentStore
-                // implementation.
-                std::make_shared<DummyC2Store>());
+        android::sp<IComponentStore> store;
+
+        // Vendor's TODO: Replace this if...else block with
+        // store = new utils::ComponentStore(
+        //         /* implementation of C2ComponentStore */);
+        if (property_get_bool("debug.stagefright.ccodec_v4l2", false)) {
+            ALOGD("Instantiating Codec2's V4L2 IComponentStore service...");
+            store = new utils::ComponentStore(
+                    android::GetCodec2VDAComponentStore());
+        } else {
+            ALOGD("Instantiating Codec2's dummy IComponentStore service...");
+            store = new utils::ComponentStore(
+                    std::make_shared<DummyC2Store>());
+        }
+
         if (store == nullptr) {
             ALOGE("Cannot create Codec2's IComponentStore service.");
         } else {

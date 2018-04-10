@@ -1,0 +1,28 @@
+cc_test {
+    name: "ccodec_test",
+
+    tags: [
+        "tests",
+    ],
+
+    srcs: [
+        "ReflectedParamUpdater_test.cpp",
+    ],
+
+    include_dirs: [
+        "hardware/google/av/media/sfplugin",
+    ],
+
+    shared_libs: [
+        "libstagefright_ccodec",
+        "libstagefright_codec2",
+        "libstagefright_foundation",
+        "libutils",
+    ],
+
+    cflags: [
+        "-Werror",
+        "-Wall",
+        "-std=c++14",
+    ],
+}

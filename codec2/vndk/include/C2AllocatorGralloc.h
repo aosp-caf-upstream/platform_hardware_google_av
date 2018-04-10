@@ -43,6 +43,13 @@ C2Handle *WrapNativeCodec2GrallocHandle(
         const native_handle_t *const handle,
         uint32_t width, uint32_t height, uint32_t format, uint64_t usage, uint32_t stride);
 
+/**
+ * \todo Get this from the buffer
+ */
+void _UnwrapNativeCodec2GrallocMetadata(
+        const C2Handle *const handle,
+        uint32_t *width, uint32_t *height, uint32_t *format, uint64_t *usage, uint32_t *stride);
+
 class C2AllocatorGralloc : public C2Allocator {
 public:
     virtual id_t getId() const override;

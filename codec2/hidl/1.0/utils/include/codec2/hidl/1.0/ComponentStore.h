@@ -104,7 +104,8 @@ protected:
     friend Component;
 
     // C2Component lookup
-    std::shared_ptr<C2Component> findC2Component(const wp<IBinder>& binder);
+    std::shared_ptr<C2Component> findC2Component(const wp<IBinder>& binder)
+            const;
 
     friend struct InputSurface;
 };

@@ -1,9 +1,6 @@
 cc_library_shared {
     name: "libstagefright_soft_c2mpeg4dec",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     srcs: ["C2SoftMpeg4Dec.cpp"],
 
@@ -28,11 +25,11 @@ cc_library_shared {
 
     shared_libs: [
         "liblog",
-        "libutils",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libstagefright_simple_c2component",
+        "libutils",
     ],
 
     ldflags: ["-Wl,-Bsymbolic"],
@@ -41,10 +38,7 @@ cc_library_shared {
 //###############################################################################
 cc_library_shared {
     name: "libstagefright_soft_c2h263dec",
-//    vendor_available: true,
-//    vndk: {
-//        enabled: true,
-//    },
+    vendor_available: true,
 
     srcs: ["C2SoftMpeg4Dec.cpp"],
 
@@ -68,11 +62,11 @@ cc_library_shared {
 
     shared_libs: [
         "liblog",
-        "libutils",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libstagefright_simple_c2component",
+        "libutils",
     ],
 
     ldflags: ["-Wl,-Bsymbolic"],

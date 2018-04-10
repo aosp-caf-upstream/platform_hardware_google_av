@@ -20,8 +20,10 @@
 #include <gtest/gtest.h>
 
 #define __C2_GENERATE_GLOBAL_VARS__
-#include <util/C2ParamUtils.h>
+//#include <util/C2ParamUtils.h>
 #include <C2ParamDef.h>
+
+#include <list>
 
 void PrintTo(const _C2FieldId &id, ::std::ostream* os) {
     *os << "@" << id._mOffset << "+" << id._mSize;
@@ -73,7 +75,7 @@ class C2ParamTest : public ::testing::Test {
 };
 
 class C2ParamTest_ParamFieldList
-        : public ::testing::TestWithParam<std::initializer_list<const C2FieldDescriptor>> {
+        : public ::testing::TestWithParam<std::vector<C2FieldDescriptor>> {
 };
 
 enum {
@@ -92,7 +94,8 @@ struct C2SizeStruct {
     int32_t width;
     int32_t height;
     enum : uint32_t { CORE_INDEX = kParamIndexSize };                        // <= needed for C2FieldDescriptor
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;  // <= needed for C2FieldDescriptor
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();  // <= needed for C2FieldDescriptor
     const static FD::type_t TYPE = (FD::type_t)(CORE_INDEX | FD::STRUCT_FLAG);
 };
 
@@ -103,7 +106,7 @@ DEFINE_NO_NAMED_VALUES_FOR(C2SizeStruct)
 bool operator==(const C2FieldDescriptor &a, const C2FieldDescriptor &b) {
     return a.type() == b.type()
             && a.extent() == b.extent()
-            && strcmp(a.name(), b.name()) == 0
+            && a.name() == b.name()
             && a._mFieldId == b._mFieldId;
 }
 
@@ -118,12 +121,16 @@ struct C2TestStruct_A {
     char string[100];
     bool yesNo[100];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = kParamIndexTest };
     // typedef C2TestStruct_A _type;
 } __attribute__((packed));
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_A::FIELD_LIST =
+const std::vector<C2FieldDescriptor> C2TestStruct_A::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_A::_FIELD_LIST =
     { { FD::INT32,    1, "s32",   0, 4 },
       { FD::INT64,    2, "s64",   4, 8 },
       { FD::UINT32,   1, "u32",  20, 4 },
@@ -135,11 +142,11 @@ const std::initializer_list<const C2FieldDescriptor> C2TestStruct_A::FIELD_LIST 
       { FD::BLOB,   100, "y-n", 260, 1 } };
 
 TEST_P(C2ParamTest_ParamFieldList, VerifyStruct) {
-    std::vector<const C2FieldDescriptor> fields = GetParam(), expected = C2TestStruct_A::FIELD_LIST;
+    std::vector<C2FieldDescriptor> fields = GetParam(), expected = C2TestStruct_A::_FIELD_LIST;
 
     // verify first field descriptor
     EXPECT_EQ(FD::INT32, fields[0].type());
-    EXPECT_STREQ("s32", fields[0].name());
+    EXPECT_STREQ("s32", fields[0].name().c_str());
     EXPECT_EQ(1u, fields[0].extent());
     EXPECT_EQ(_C2FieldId(0, 4), fields[0]._mFieldId);
 
@@ -156,10 +163,10 @@ TEST_P(C2ParamTest_ParamFieldList, VerifyStruct) {
     }
 }
 
-INSTANTIATE_TEST_CASE_P(InitializerList, C2ParamTest_ParamFieldList, ::testing::Values(C2TestStruct_A::FIELD_LIST));
+INSTANTIATE_TEST_CASE_P(InitializerList, C2ParamTest_ParamFieldList, ::testing::Values(C2TestStruct_A::_FIELD_LIST));
 
 // define fields using C2FieldDescriptor pointer constructor
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_A_FD_PTR_fieldList =
+const std::vector<C2FieldDescriptor> C2TestStruct_A_FD_PTR_fieldList =
     { C2FieldDescriptor(&((C2TestStruct_A*)(nullptr))->signed32,   "s32"),
       C2FieldDescriptor(&((C2TestStruct_A*)(nullptr))->signed64,   "s64"),
       C2FieldDescriptor(&((C2TestStruct_A*)(nullptr))->unsigned32, "u32"),
@@ -174,7 +181,7 @@ const std::initializer_list<const C2FieldDescriptor> C2TestStruct_A_FD_PTR_field
 INSTANTIATE_TEST_CASE_P(PointerConstructor, C2ParamTest_ParamFieldList, ::testing::Values(C2TestStruct_A_FD_PTR_fieldList));
 
 // define fields using C2FieldDescriptor member-pointer constructor
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_A_FD_MEM_PTR_fieldList =
+const std::vector<C2FieldDescriptor> C2TestStruct_A_FD_MEM_PTR_fieldList =
     { C2FieldDescriptor((C2TestStruct_A*)0, &C2TestStruct_A::signed32,   "s32"),
       C2FieldDescriptor((C2TestStruct_A*)0, &C2TestStruct_A::signed64,   "s64"),
       C2FieldDescriptor((C2TestStruct_A*)0, &C2TestStruct_A::unsigned32, "u32"),
@@ -217,7 +224,7 @@ DESCRIBE_C2STRUCT(TestA, {
     // C2FIELD(yesNo, "y-n")
 }) // ; optional
 
-INSTANTIATE_TEST_CASE_P(DescribeStruct2Step, C2ParamTest_ParamFieldList, ::testing::Values(C2TestAStruct::FIELD_LIST));
+INSTANTIATE_TEST_CASE_P(DescribeStruct2Step, C2ParamTest_ParamFieldList, ::testing::Values(C2TestAStruct::FieldList()));
 
 // Test 3. define a structure with one-step helper method
 
@@ -246,7 +253,7 @@ private: // test access level
     // C2FIELD(yesNo, "y-n")
 };
 
-INSTANTIATE_TEST_CASE_P(DescribeStruct1Step, C2ParamTest_ParamFieldList, ::testing::Values(C2TestBStruct::FIELD_LIST));
+INSTANTIATE_TEST_CASE_P(DescribeStruct1Step, C2ParamTest_ParamFieldList, ::testing::Values(C2TestBStruct::FieldList()));
 
 // Test 4. flexible members
 
@@ -255,8 +262,8 @@ class C2ParamTest_FlexParamFieldList : public ::testing::Test {
 protected:
     using type_t=FD::type_t;
 
-    // static std::initializer_list<std::initializer_list<const C2FieldDescriptor>>
-    static std::vector<std::vector<const C2FieldDescriptor>>
+    // static std::vector<std::vector<C2FieldDescriptor>>
+    static std::vector<std::vector<C2FieldDescriptor>>
             GetLists();
 
     constexpr static type_t FlexType =
@@ -276,7 +283,7 @@ TYPED_TEST_CASE(C2ParamTest_FlexParamFieldList, FlexTypes);
 
 TYPED_TEST(C2ParamTest_FlexParamFieldList, VerifyStruct) {
     for (auto a : this->GetLists()) {
-        std::vector<const C2FieldDescriptor> fields = a;
+        std::vector<C2FieldDescriptor> fields = a;
         if (fields.size() > 1) {
             EXPECT_EQ(2u, fields.size());
             EXPECT_EQ(C2FieldDescriptor(FD::INT32, 1, "s32", 0, 4), fields[0]);
@@ -293,13 +300,17 @@ TYPED_TEST(C2ParamTest_FlexParamFieldList, VerifyStruct) {
 struct C2TestStruct_FlexS32 {
     int32_t mFlex[];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = kParamIndexTestFlex, FLEX_SIZE = 4 };
     // typedef C2TestStruct_FlexS32 _type;
     // typedef int32_t FlexType;
 };
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexS32::FIELD_LIST = {
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexS32::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexS32::_FIELD_LIST = {
     { FD::INT32, 0, "flex", 0, 4 }
 };
 
@@ -307,18 +318,22 @@ struct C2TestStruct_FlexEndS32 {
     int32_t signed32;
     int32_t mFlex[];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = kParamIndexTestFlexEnd, FLEX_SIZE = 4 };
     // typedef C2TestStruct_FlexEnd _type;
     // typedef int32_t FlexType;
 };
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexEndS32::FIELD_LIST = {
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexEndS32::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexEndS32::_FIELD_LIST = {
     { FD::INT32, 1, "s32", 0, 4 },
     { FD::INT32, 0, "flex", 4, 4 },
 };
 
-const static std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexEndS32_ptr_fieldList = {
+const static std::vector<C2FieldDescriptor> C2TestStruct_FlexEndS32_ptr_fieldList = {
     C2FieldDescriptor(&((C2TestStruct_FlexEndS32*)0)->signed32, "s32"),
     C2FieldDescriptor(&((C2TestStruct_FlexEndS32*)0)->mFlex, "flex"),
 };
@@ -347,28 +362,32 @@ DESCRIBE_C2STRUCT(TestFlexEndS32, {
 }) // ; optional
 
 template<>
-std::vector<std::vector<const C2FieldDescriptor>>
-//std::initializer_list<std::initializer_list<const C2FieldDescriptor>>
+std::vector<std::vector<C2FieldDescriptor>>
+//std::vector<std::vector<C2FieldDescriptor>>
 C2ParamTest_FlexParamFieldList<int32_t>::GetLists() {
     return {
-        C2TestStruct_FlexS32::FIELD_LIST,
-        C2TestStruct_FlexEndS32::FIELD_LIST,
+        C2TestStruct_FlexS32::FieldList(),
+        C2TestStruct_FlexEndS32::FieldList(),
         C2TestStruct_FlexEndS32_ptr_fieldList,
-        C2TestFlexS32Struct::FIELD_LIST,
-        C2TestFlexEndS32Struct::FIELD_LIST,
+        C2TestFlexS32Struct::FieldList(),
+        C2TestFlexEndS32Struct::FieldList(),
     };
 }
 
 struct C2TestStruct_FlexS64 {
     int64_t mFlexSigned64[];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = kParamIndexTestFlexS64, FLEX_SIZE = 8 };
     // typedef C2TestStruct_FlexS64 _type;
     // typedef int64_t FlexType;
 };
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexS64::FIELD_LIST = {
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexS64::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexS64::_FIELD_LIST = {
     { FD::INT64, 0, "flex", 0, 8 }
 };
 
@@ -376,13 +395,17 @@ struct C2TestStruct_FlexEndS64 {
     int32_t signed32;
     int64_t mSigned64Flex[];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = C2TestStruct_FlexEndS64, FLEX_SIZE = 8 };
     // typedef C2TestStruct_FlexEndS64 _type;
     // typedef int64_t FlexType;
 };
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexEndS64::FIELD_LIST = {
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexEndS64::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexEndS64::_FIELD_LIST = {
     { FD::INT32, 1, "s32", 0, 4 },
     { FD::INT64, 0, "flex", 4, 8 },
 };
@@ -409,27 +432,31 @@ DESCRIBE_C2STRUCT(TestFlexEndS64, {
 }) // ; optional
 
 template<>
-std::vector<std::vector<const C2FieldDescriptor>>
-//std::initializer_list<std::initializer_list<const C2FieldDescriptor>>
+std::vector<std::vector<C2FieldDescriptor>>
+//std::vector<std::vector<C2FieldDescriptor>>
 C2ParamTest_FlexParamFieldList<int64_t>::GetLists() {
     return {
-        C2TestStruct_FlexS64::FIELD_LIST,
-        C2TestStruct_FlexEndS64::FIELD_LIST,
-        C2TestFlexS64Struct::FIELD_LIST,
-        C2TestFlexEndS64Struct::FIELD_LIST,
+        C2TestStruct_FlexS64::FieldList(),
+        C2TestStruct_FlexEndS64::FieldList(),
+        C2TestFlexS64Struct::FieldList(),
+        C2TestFlexEndS64Struct::FieldList(),
     };
 }
 
 struct C2TestStruct_FlexSize {
     C2SizeStruct mFlexSize[];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = kParamIndexTestFlexSize, FLEX_SIZE = 8 };
     // typedef C2TestStruct_FlexSize _type;
     // typedef C2SizeStruct FlexType;
 };
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexSize::FIELD_LIST = {
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexSize::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexSize::_FIELD_LIST = {
     { C2SizeStruct::TYPE, 0, "flex", 0, sizeof(C2SizeStruct) }
 };
 
@@ -437,13 +464,17 @@ struct C2TestStruct_FlexEndSize {
     int32_t signed32;
     C2SizeStruct mSizeFlex[];
 
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> _FIELD_LIST;
+    static const std::vector<C2FieldDescriptor> FieldList();
     // enum : uint32_t { CORE_INDEX = C2TestStruct_FlexEndSize, FLEX_SIZE = 8 };
     // typedef C2TestStruct_FlexEndSize _type;
     // typedef C2SizeStruct FlexType;
 };
 
-const std::initializer_list<const C2FieldDescriptor> C2TestStruct_FlexEndSize::FIELD_LIST = {
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexEndSize::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2TestStruct_FlexEndSize::_FIELD_LIST = {
     { FD::INT32, 1, "s32", 0, 4 },
     { C2SizeStruct::TYPE, 0, "flex", 4, sizeof(C2SizeStruct) },
 };
@@ -493,16 +524,16 @@ struct C2TestBaseFlexEndSize2Struct {
 };
 
 template<>
-std::vector<std::vector<const C2FieldDescriptor>>
-//std::initializer_list<std::initializer_list<const C2FieldDescriptor>>
+std::vector<std::vector<C2FieldDescriptor>>
+//std::vector<std::vector<C2FieldDescriptor>>
 C2ParamTest_FlexParamFieldList<C2SizeStruct>::GetLists() {
     return {
-        C2TestStruct_FlexSize::FIELD_LIST,
-        C2TestStruct_FlexEndSize::FIELD_LIST,
-        C2TestFlexSizeStruct::FIELD_LIST,
-        C2TestFlexEndSizeStruct::FIELD_LIST,
-        C2TestBaseFlexEndSizeStruct::FIELD_LIST,
-        C2TestBaseFlexEndSize2Struct::FIELD_LIST,
+        C2TestStruct_FlexSize::FieldList(),
+        C2TestStruct_FlexEndSize::FieldList(),
+        C2TestFlexSizeStruct::FieldList(),
+        C2TestFlexEndSizeStruct::FieldList(),
+        C2TestBaseFlexEndSizeStruct::FieldList(),
+        C2TestBaseFlexEndSize2Struct::FieldList(),
     };
 }
 
@@ -724,7 +755,7 @@ typedef C2StreamParam<C2Tuning, C2NumbersStruct> C2NumbersStreamTuning;
 
 void test() {
     C2NumberStruct s(10);
-    (void)C2NumberStruct::FIELD_LIST;
+    (void)C2NumberStruct::FieldList();
 };
 
 typedef C2StreamParam<C2Tuning, C2Int64Value, kParamIndexNumberB> C2NumberConfig4;
@@ -735,7 +766,7 @@ void test3() {
     C2NumberConfig3 s(10);
     s.value = 11;
     s = 12;
-    (void)C2NumberConfig3::FIELD_LIST;
+    (void)C2NumberConfig3::FieldList();
     std::shared_ptr<C2VideoNameConfig> n = C2VideoNameConfig::AllocShared(25);
     strcpy(n->m.value, "lajos");
     C2NumberConfig4 t(false, 0, 11);
@@ -745,7 +776,8 @@ void test3() {
 struct C2NumbersStruct {
     int32_t mNumbers[];
     enum { CORE_INDEX = kParamIndexNumber };
-    const static std::initializer_list<const C2FieldDescriptor> FIELD_LIST;
+    const static std::vector<C2FieldDescriptor> FieldList();
+    static const std::vector<C2FieldDescriptor> FieldList();
     C2NumbersStruct() {}
 
     FLEX(C2NumbersStruct, mNumbers);
@@ -756,16 +788,19 @@ static_assert(sizeof(C2NumbersStruct) == 0, "yes");
 
 typedef C2GlobalParam<C2Info, C2NumbersStruct> C2NumbersInfo;
 
-const std::initializer_list<const C2FieldDescriptor> C2NumbersStruct::FIELD_LIST =
+const std::vector<C2FieldDescriptor> C2NumbersStruct::FieldList() {
+    return _FIELD_LIST;
+}
+const std::vector<C2FieldDescriptor> C2NumbersStruct::_FIELD_LIST =
 //    { { FD::INT32, 0, "widths" } };
     { C2FieldDescriptor(&((C2NumbersStruct*)(nullptr))->mNumbers, "number") };
 
 typedef C2PortParam<C2Tuning, C2NumberStruct> C2NumberConfig;
 
-std::list<const C2FieldDescriptor> myList = C2NumberConfig::FIELD_LIST;
+std::vector<C2FieldDescriptor> myList = C2NumberConfig::FieldList();
 
     std::unique_ptr<C2ParamDescriptor> __test_describe(uint32_t paramType) {
-        std::list<const C2FieldDescriptor> fields = describeC2Params<C2NumberConfig>();
+        std::list<C2FieldDescriptor> fields = describeC2Params<C2NumberConfig>();
 
         auto widths = C2NumbersInfo::AllocShared(5);
         widths->flexCount();
@@ -2236,7 +2271,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         C2Int32Value int32Value(INT32_MIN);
         static_assert(std::is_same<decltype(int32Value.value), int32_t>::value, "should be int32_t");
         EXPECT_EQ(INT32_MIN, int32Value.value);
-        std::list<const C2FieldDescriptor> fields = int32Value.FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = int32Value.FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::INT32, fields.cbegin()->type());
         EXPECT_EQ(1u, fields.cbegin()->extent());
@@ -2247,7 +2282,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         C2Uint32Value uint32Value(UINT32_MAX);
         static_assert(std::is_same<decltype(uint32Value.value), uint32_t>::value, "should be uint32_t");
         EXPECT_EQ(UINT32_MAX, uint32Value.value);
-        std::list<const C2FieldDescriptor> fields = uint32Value.FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = uint32Value.FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::UINT32, fields.cbegin()->type());
         EXPECT_EQ(1u, fields.cbegin()->extent());
@@ -2258,7 +2293,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         C2Int64Value int64Value(INT64_MIN);
         static_assert(std::is_same<decltype(int64Value.value), int64_t>::value, "should be int64_t");
         EXPECT_EQ(INT64_MIN, int64Value.value);
-        std::list<const C2FieldDescriptor> fields = int64Value.FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = int64Value.FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::INT64, fields.cbegin()->type());
         EXPECT_EQ(1u, fields.cbegin()->extent());
@@ -2269,7 +2304,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         C2Uint64Value uint64Value(UINT64_MAX);
         static_assert(std::is_same<decltype(uint64Value.value), uint64_t>::value, "should be uint64_t");
         EXPECT_EQ(UINT64_MAX, uint64Value.value);
-        std::list<const C2FieldDescriptor> fields = uint64Value.FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = uint64Value.FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::UINT64, fields.cbegin()->type());
         EXPECT_EQ(1u, fields.cbegin()->extent());
@@ -2280,7 +2315,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         C2FloatValue floatValue(123.4f);
         static_assert(std::is_same<decltype(floatValue.value), float>::value, "should be float");
         EXPECT_EQ(123.4f, floatValue.value);
-        std::list<const C2FieldDescriptor> fields = floatValue.FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = floatValue.FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::FLOAT, fields.cbegin()->type());
         EXPECT_EQ(1u, fields.cbegin()->extent());
@@ -2294,7 +2329,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         static_assert(std::is_same<decltype(blobValue->m.value), uint8_t[]>::value, "should be uint8_t[]");
         EXPECT_EQ(0, memcmp(blobValue->m.value, "ABCD\0", 6));
         EXPECT_EQ(6u, blobValue->flexCount());
-        std::list<const C2FieldDescriptor> fields = blobValue->FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = blobValue->FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::BLOB, fields.cbegin()->type());
         EXPECT_EQ(0u, fields.cbegin()->extent());
@@ -2313,7 +2348,7 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         static_assert(std::is_same<decltype(stringValue->m.value), char[]>::value, "should be char[]");
         EXPECT_EQ(0, memcmp(stringValue->m.value, "ABCD\0", 6));
         EXPECT_EQ(6u, stringValue->flexCount());
-        std::list<const C2FieldDescriptor> fields = stringValue->FIELD_LIST;
+        std::vector<C2FieldDescriptor> fields = stringValue->FieldList();
         EXPECT_EQ(1u, fields.size());
         EXPECT_EQ(FD::STRING, fields.cbegin()->type());
         EXPECT_EQ(0u, fields.cbegin()->extent());
@@ -2391,456 +2426,6 @@ TEST_F(C2ParamTest, FlexParamOpsTest) {
         p1 = C2Param::From(videoWidth, 0);
         EXPECT_EQ(nullptr, p1);
     }
-}
-
-// ***********************
-
-#include <util/C2ParamUtils.h>
-#include <C2Config.h>
-#include <C2Component.h>
-#include <unordered_map>
-
-C2ENUM(
-    MetadataType, int32_t,
-    kInvalid = -1,
-    kNone = 0,
-    kGralloc,
-    kNativeHandle,
-    kANativeWindow,
-    kCamera,
-)
-
-enum {
-    kParamIndexVideoConfig = 0x1234,
-};
-
-struct C2VideoConfigStruct {
-    int32_t width;
-    uint32_t height;
-    MetadataType metadataType;
-    int32_t supportedFormats[];
-
-    C2VideoConfigStruct() {}
-
-    DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(VideoConfig, supportedFormats)
-    C2FIELD(width, "width")
-    C2FIELD(height, "height")
-    C2FIELD(metadataType, "metadata-type")
-    C2FIELD(supportedFormats, "formats")
-};
-
-typedef C2PortParam<C2Tuning, C2VideoConfigStruct> C2VideoConfigPortTuning;
-
-class MyComponentInstance : public C2ComponentInterface {
-public:
-    virtual C2String getName() const override {
-        /// \todo this seems too specific
-        return "sample.interface";
-    };
-
-    virtual c2_node_id_t getId() const override {
-        /// \todo how are these shared?
-        return 0;
-    }
-
-    virtual c2_status_t config_vb(
-            const std::vector<C2Param*> &params,
-            c2_blocking_t mayBlock,
-            std::vector<std::unique_ptr<C2SettingResult>>* const failures) override {
-        (void)params;
-        (void)failures;
-        (void)mayBlock;
-        return C2_OMITTED;
-    }
-
-    virtual c2_status_t createTunnel_sm(c2_node_id_t targetComponent) override {
-        (void)targetComponent;
-        return C2_OMITTED;
-    }
-
-    virtual c2_status_t query_vb(
-            const std::vector<C2Param*> &stackParams,
-            const std::vector<C2Param::Index> &heapParamIndices,
-            c2_blocking_t mayBlock,
-            std::vector<std::unique_ptr<C2Param>>* const heapParams) const override {
-        for (C2Param* const param : stackParams) {
-            (void)mayBlock;
-            if (!*param) { // param is already invalid - remember it
-                continue;
-            }
-
-            // note: this does not handle stream params (should use index...)
-            if (!mMyParams.count(param->index())) {
-                continue; // not my param
-            }
-
-            C2Param & myParam = mMyParams.find(param->index())->second;
-            if (myParam.size() != param->size()) { // incorrect size
-                param->invalidate();
-                continue;
-            }
-
-            param->updateFrom(myParam);
-        }
-
-        for (const C2Param::Index index : heapParamIndices) {
-            if (mMyParams.count(index)) {
-                C2Param & myParam = mMyParams.find(index)->second;
-                std::unique_ptr<C2Param> paramCopy(C2Param::Copy(myParam));
-                heapParams->push_back(std::move(paramCopy));
-            }
-        }
-
-        return C2_OK;
-    }
-
-    std::unordered_map<uint32_t, C2Param &> mMyParams;
-
-    C2ComponentDomainInfo mDomainInfo;
-
-    MyComponentInstance() {
-        mMyParams.insert({mDomainInfo.index(), mDomainInfo});
-    }
-
-    virtual c2_status_t releaseTunnel_sm(c2_node_id_t targetComponent) override {
-        (void)targetComponent;
-        return C2_OMITTED;
-    }
-
-    class MyParamReflector : public C2ParamReflector {
-        const MyComponentInstance *instance;
-
-    public:
-        MyParamReflector(const MyComponentInstance *i) : instance(i) { }
-
-        virtual std::unique_ptr<C2StructDescriptor> describe(C2Param::CoreIndex paramIndex) const override {
-            switch (paramIndex.typeIndex()) {
-            case decltype(instance->mDomainInfo)::CORE_INDEX:
-            default:
-                return std::unique_ptr<C2StructDescriptor>(new C2StructDescriptor{
-                    instance->mDomainInfo.type(),
-                    decltype(instance->mDomainInfo)::FIELD_LIST,
-                });
-            }
-            return nullptr;
-        }
-    };
-
-    virtual c2_status_t querySupportedValues_vb(
-            std::vector<C2FieldSupportedValuesQuery> &fields,
-            c2_blocking_t mayBlock) const override {
-        (void)mayBlock;
-        for (C2FieldSupportedValuesQuery &query : fields) {
-            if (query.field() == C2ParamField(&mDomainInfo, &C2ComponentDomainInfo::value)) {
-                query.values = C2FieldSupportedValues(
-                    false /* flag */,
-                    &mDomainInfo.value
-                    //,
-                    //{(int32_t)C2DomainVideo}
-                );
-                query.status = C2_OK;
-            } else {
-                query.status = C2_BAD_INDEX;
-            }
-        }
-        return C2_OK;
-    }
-
-    std::shared_ptr<C2ParamReflector> getParamReflector() const {
-        return std::shared_ptr<C2ParamReflector>(new MyParamReflector(this));
-    }
-
-    virtual c2_status_t querySupportedParams_nb(
-            std::vector<std::shared_ptr<C2ParamDescriptor>> * const params) const override {
-        params->push_back(std::make_shared<C2ParamDescriptor>(
-                true /* required */, "_domain", &mDomainInfo));
-        params->push_back(std::shared_ptr<C2ParamDescriptor>(
-                new C2ParamDescriptor(true /* required */, "_domain", &mDomainInfo)));
-        return C2_OK;
-    }
-
-    virtual ~MyComponentInstance() override = default;
-};
-
-template<typename E, bool S=std::is_enum<E>::value>
-struct getter {
-    int32_t get(const C2FieldSupportedValues::Primitive &p, int32_t*) {
-        return p.i32;
-    }
-    int64_t get(const C2FieldSupportedValues::Primitive &p, int64_t*) {
-        return p.i64;
-    }
-    uint32_t get(const C2FieldSupportedValues::Primitive &p, uint32_t*) {
-        return p.u32;
-    }
-    uint64_t get(const C2FieldSupportedValues::Primitive &p, uint64_t*) {
-        return p.u64;
-    }
-    float get(const C2FieldSupportedValues::Primitive &p, float*) {
-        return p.fp;
-    }
-};
-
-template<typename E>
-struct getter<E, true> {
-     typename std::underlying_type<E>::type get(const C2FieldSupportedValues::Primitive &p, E*) {
-         using u=typename std::underlying_type<E>::type;
-         return getter<u>().get(p, (u*)0);
-     }
-};
-
-template<typename T, bool E=std::is_enum<T>::value>
-struct lax_underlying_type {
-    typedef typename std::underlying_type<T>::type type;
-};
-
-template<typename T>
-struct lax_underlying_type<T, false> {
-    typedef T type;
-};
-
-template<typename E>
-typename lax_underlying_type<E>::type get(
-        const C2FieldSupportedValues::Primitive &p, E*) {
-    return getter<E>().get(p, (E*)0);
-}
-
-template<typename T>
-void dumpFSV(const C2FieldSupportedValues &sv, T*t) {
-    using namespace std;
-    cout << (std::is_enum<T>::value ? (std::is_signed<typename lax_underlying_type<T>::type>::value ? "i" : "u")
-             : std::is_integral<T>::value ? std::is_signed<T>::value ? "i" : "u" : "f")
-         << (8 * sizeof(T));
-    if (sv.type == sv.RANGE) {
-        cout << ".range(" << get(sv.range.min, t);
-        if (get(sv.range.step, t) != std::is_integral<T>::value) {
-            cout << ":" << get(sv.range.step, t);
-        }
-        if (get(sv.range.num, t) != 1 || get(sv.range.denom, t) != 1) {
-            cout << ":" << get(sv.range.num, t) << "/" << get(sv.range.denom, t);
-        }
-        cout << get(sv.range.max, t) << ")";
-    }
-    if (sv.values.size()) {
-        cout << (sv.type == sv.FLAGS ? ".flags(" : ".list(");
-        const char *sep = "";
-        for (const C2FieldSupportedValues::Primitive &p : sv.values) {
-            cout << sep << get(p, t);
-            sep = ",";
-        }
-        cout << ")";
-    }
-    cout << endl;
-}
-
-void dumpType(C2Param::Type type) {
-    using namespace std;
-    cout << (type.isVendor() ? "Vendor" : "C2");
-    if (type.forInput()) {
-        cout << "Input";
-    } else if (type.forOutput()) {
-        cout << "Output";
-    } else if (type.forPort() && !type.forStream()) {
-        cout << "Port";
-    }
-    if (type.forStream()) {
-        cout << "Stream";
-    }
-
-    if (type.isFlexible()) {
-        cout << "Flex";
-    }
-
-    cout << type.typeIndex();
-
-    switch (type.kind()) {
-    case C2Param::INFO: cout << "Info"; break;
-    case C2Param::SETTING: cout << "Setting"; break;
-    case C2Param::TUNING: cout << "Tuning"; break;
-    case C2Param::STRUCT: cout << "Struct"; break;
-    default: cout << "Kind" << (int32_t)type.kind(); break;
-    }
-}
-
-void dumpType(C2Param::CoreIndex type) {
-    using namespace std;
-    cout << (type.isVendor() ? "Vendor" : "C2");
-    if (type.isFlexible()) {
-        cout << "Flex";
-    }
-
-    cout << type.typeIndex() << "Struct";
-}
-
-void dumpType(FD::type_t type) {
-    using namespace std;
-    switch (type) {
-    case FD::BLOB: cout << "blob "; break;
-    case FD::FLOAT: cout << "float "; break;
-    case FD::INT32: cout << "int32_t "; break;
-    case FD::INT64: cout << "int64_t "; break;
-    case FD::UINT32: cout << "uint32_t "; break;
-    case FD::UINT64: cout << "uint64_t "; break;
-    case FD::STRING: cout << "char "; break;
-    default:
-        cout << "struct ";
-        dumpType((C2Param::Type)type);
-        break;
-    }
-}
-
-void dumpStruct(const C2StructDescriptor &sd) {
-    using namespace std;
-    cout << "struct ";
-    dumpType(sd.coreIndex());
-    cout << " {" << endl;
-    //C2FieldDescriptor &f;
-    for (const C2FieldDescriptor &f : sd) {
-        PrintTo(f, &cout);
-        cout << endl;
-
-        if (f.namedValues().size()) {
-            cout << ".named(";
-            const char *sep = "";
-            for (const FD::NamedValueType &p : f.namedValues()) {
-                cout << sep << p.first << "=";
-                switch (f.type()) {
-                case C2Value::INT32: cout << get(p.second, (int32_t *)0); break;
-                case C2Value::INT64: cout << get(p.second, (int64_t *)0); break;
-                case C2Value::UINT32: cout << get(p.second, (uint32_t *)0); break;
-                case C2Value::UINT64: cout << get(p.second, (uint64_t *)0); break;
-                case C2Value::FLOAT: cout << get(p.second, (float *)0); break;
-                default: cout << "???"; break;
-                }
-                sep = ",";
-            }
-            cout << ")";
-        }
-    }
-
-    cout << "};" << endl;
-}
-
-void dumpDesc(const C2ParamDescriptor &pd) {
-    using namespace std;
-    if (pd.isRequired()) {
-        cout << "required ";
-    }
-    if (pd.isPersistent()) {
-        cout << "persistent ";
-    }
-    cout << "struct ";
-    dumpType(C2Param::Type(pd.index().type()));
-    cout << " " << pd.name() << ";" << endl;
-}
-
-TEST_F(C2ParamTest, ReflectorTest) {
-    C2ComponentDomainInfo domainInfo;
-    std::shared_ptr<MyComponentInstance> myComp(new MyComponentInstance);
-    std::shared_ptr<C2ComponentInterface> comp = myComp;
-
-    std::unique_ptr<C2StructDescriptor> desc{
-        myComp->getParamReflector()->describe(C2ComponentDomainInfo::CORE_INDEX)};
-    dumpStruct(*desc);
-
-    std::vector<C2FieldSupportedValuesQuery> query = {
-        { C2ParamField(&domainInfo, &C2ComponentDomainInfo::value),
-          C2FieldSupportedValuesQuery::CURRENT },
-        C2FieldSupportedValuesQuery(C2ParamField(&domainInfo, &C2ComponentDomainInfo::value),
-          C2FieldSupportedValuesQuery::CURRENT),
-        C2FieldSupportedValuesQuery::Current(C2ParamField(&domainInfo, &C2ComponentDomainInfo::value)),
-    };
-
-    EXPECT_EQ(C2_OK, comp->querySupportedValues_vb(query, C2_DONT_BLOCK));
-
-    for (const C2FieldSupportedValuesQuery &q : query) {
-        dumpFSV(q.values, &domainInfo.value);
-    }
-}
-
-TEST_F(C2ParamTest, FieldSupportedValuesTest) {
-    typedef C2GlobalParam<C2Info, C2Uint32Value, 0> Uint32TestInfo;
-    Uint32TestInfo t;
-    std::vector<C2FieldSupportedValues> values;
-    values.push_back(C2FieldSupportedValues(0, 10, 1));  // min, max, step
-    values.push_back(C2FieldSupportedValues(1, 64, 2, 1));  // min, max, num, den
-    values.push_back(C2FieldSupportedValues(false, {1, 2, 3}));  // flags, std::initializer_list
-    uint32_t val[] = {1, 3, 5, 7};
-    std::vector<uint32_t> v(std::begin(val), std::end(val));
-    values.push_back(C2FieldSupportedValues(false, v));  // flags, std::vector
-
-    for (const C2FieldSupportedValues &sv : values) {
-        dumpFSV(sv, &t.value);
-    }
-}
-
-C2ENUM(Enum1, uint32_t,
-    Enum1Value1,
-    Enum1Value2,
-    Enum1Value4 = Enum1Value2 + 2,
-);
-
-C2ENUM_CUSTOM_PREFIX(Enum2, uint32_t, "Enum",
-    Enum2Value1,
-    Enum2Value2,
-    Enum2Value4 = Enum1Value2 + 2,
-);
-
-C2ENUM_CUSTOM_NAMES(Enum3, uint8_t,
-    ({ { "value1", Enum3Value1 },
-       { "value2", Enum3Value2 },
-       { "value4", Enum3Value4 },
-       { "invalid", Invalid } }),
-    Enum3Value1,
-    Enum3Value2,
-    Enum3Value4 = Enum3Value2 + 2,
-    Invalid,
-);
-
-TEST_F(C2ParamTest, EnumUtilsTest) {
-    std::vector<std::pair<C2String, Enum3>> pairs ( { { "value1", Enum3Value1 },
-      { "value2", Enum3Value2 },
-      { "value4", Enum3Value4 },
-      { "invalid", Invalid } });
-    Enum3 e3;
-    FD::namedValuesFor(e3);
-}
-
-TEST_F(C2ParamTest, ParamUtilsTest) {
-    // upper case
-    EXPECT_EQ("yes", C2ParamUtils::camelCaseToDashed("YES"));
-    EXPECT_EQ("no", C2ParamUtils::camelCaseToDashed("NO"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("YES_NO"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("YES__NO"));
-    EXPECT_EQ("a2dp", C2ParamUtils::camelCaseToDashed("A2DP"));
-    EXPECT_EQ("mp2-ts", C2ParamUtils::camelCaseToDashed("MP2_TS"));
-    EXPECT_EQ("block-2d", C2ParamUtils::camelCaseToDashed("BLOCK_2D"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("MPEG_2_TS"));
-    EXPECT_EQ("_hidden-value", C2ParamUtils::camelCaseToDashed("_HIDDEN_VALUE"));
-    EXPECT_EQ("__hidden-value2", C2ParamUtils::camelCaseToDashed("__HIDDEN_VALUE2"));
-    EXPECT_EQ("__hidden-value-2", C2ParamUtils::camelCaseToDashed("__HIDDEN_VALUE_2"));
-
-    // camel case
-    EXPECT_EQ("yes", C2ParamUtils::camelCaseToDashed("Yes"));
-    EXPECT_EQ("no", C2ParamUtils::camelCaseToDashed("No"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("YesNo"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("Yes_No"));
-    EXPECT_EQ("mp2-ts", C2ParamUtils::camelCaseToDashed("MP2Ts"));
-    EXPECT_EQ("block-2d", C2ParamUtils::camelCaseToDashed("Block2D"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("Mpeg2ts"));
-    EXPECT_EQ("_hidden-value", C2ParamUtils::camelCaseToDashed("_HiddenValue"));
-    EXPECT_EQ("__hidden-value-2", C2ParamUtils::camelCaseToDashed("__HiddenValue2"));
-
-    // mixed case
-    EXPECT_EQ("mp2t-s", C2ParamUtils::camelCaseToDashed("MP2T_s"));
-    EXPECT_EQ("block-2d", C2ParamUtils::camelCaseToDashed("Block_2D"));
-    EXPECT_EQ("block-2-d", C2ParamUtils::camelCaseToDashed("Block2_D"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("Mpeg_2ts"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("Mpeg_2_TS"));
-    EXPECT_EQ("_hidden-value", C2ParamUtils::camelCaseToDashed("_Hidden__VALUE"));
-    EXPECT_EQ("__hidden-value-2", C2ParamUtils::camelCaseToDashed("__HiddenValue_2"));
-    EXPECT_EQ("_2", C2ParamUtils::camelCaseToDashed("_2"));
-    EXPECT_EQ("__23", C2ParamUtils::camelCaseToDashed("__23"));
 }
 
 TEST_F(C2ParamTest, C2ValueTest) {

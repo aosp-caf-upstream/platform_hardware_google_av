@@ -483,14 +483,30 @@ Status objcpy(StructDescriptor *d, const C2StructDescriptor &s) {
 }
 
 // StructDescriptor -> C2StructDescriptor
-c2_status_t objcpy(C2StructDescriptor *d, const StructDescriptor &s) {
-    // TODO: Implement this when C2StructDescriptor can be dynamically
-    // constructed.
-    (void)d;
-    (void)s;
-    ALOGE("Conversion StructDescriptor -> C2StructDescriptor "
-            "not implemented.");
-    return C2_OMITTED;
+c2_status_t objcpy(std::unique_ptr<C2StructDescriptor> *d, const StructDescriptor &s) {
+    C2Param::CoreIndex dIndex = C2Param::CoreIndex(static_cast<uint32_t>(s.type));
+    std::vector<C2FieldDescriptor> dFields;
+    dFields.reserve(s.fields.size());
+    for (const auto &sField : s.fields) {
+        C2FieldDescriptor dField = {
+            static_cast<uint32_t>(sField.type),
+            sField.length,
+            sField.name,
+            sField.fieldId.offset,
+            sField.fieldId.size };
+        C2FieldDescriptor::NamedValuesType namedValues;
+        namedValues.reserve(sField.namedValues.size());
+        for (const auto& sNamedValue : sField.namedValues) {
+            namedValues.emplace_back(
+                sNamedValue.name,
+                C2Value::Primitive(static_cast<uint64_t>(sNamedValue.value)));
+        }
+        _C2ParamInspector::AddNamedValues(dField, std::move(namedValues));
+        dFields.emplace_back(dField);
+    }
+    *d = std::make_unique<C2StructDescriptor>(
+            _C2ParamInspector::CreateStructDescriptor(dIndex, std::move(dFields)));
+    return C2_OK;
 }
 
 // Finds or adds a hidl BaseBlock object from a given C2Handle* to a list and an
@@ -826,7 +842,8 @@ c2_status_t objcpy(std::shared_ptr<C2Buffer>* d, const Buffer& s,
         // Construct a block.
         switch (sBaseBlock.type) {
         case BaseBlock::Type::NATIVE: {
-            const native_handle_t* sHandle = sBaseBlock.nativeBlock;
+            const native_handle_t* sHandle =
+                    native_handle_clone(sBaseBlock.nativeBlock);
             if (sHandle == nullptr) {
                 ALOGE("Null native handle in a block.");
                 return C2_BAD_VALUE;

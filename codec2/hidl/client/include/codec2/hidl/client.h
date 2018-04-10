@@ -247,14 +247,18 @@ struct Codec2Client::Component : public Codec2Client::Configurable {
 
     c2_status_t release();
 
-    // Input surface
-    c2_status_t connectToInputSurface(
-            const std::shared_ptr<InputSurface>& surface);
-
     typedef ::android::hardware::graphics::bufferqueue::V1_0::
             IGraphicBufferProducer IGraphicBufferProducer;
     typedef ::android::hardware::media::omx::V1_0::
             IGraphicBufferSource IGraphicBufferSource;
+
+    // Output surface
+    c2_status_t setOutputSurface(const sp<IGraphicBufferProducer>& surface);
+
+    // Input surface
+    c2_status_t connectToInputSurface(
+            const std::shared_ptr<InputSurface>& surface);
+
     c2_status_t connectToOmxInputSurface(
             const sp<IGraphicBufferProducer>& producer,
             const sp<IGraphicBufferSource>& source);

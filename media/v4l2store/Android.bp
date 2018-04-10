@@ -1,12 +1,13 @@
 cc_library_shared {
     name: "libv4l2_c2componentstore",
+    vendor_available: true,
     srcs: [
         "C2VDAComponentStore.cpp",
     ],
     shared_libs: [
+        "liblog",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
-        "liblog",
         "libutils",
     ],
     cflags: [

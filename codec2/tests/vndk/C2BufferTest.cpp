@@ -456,7 +456,7 @@ TEST_F(C2BufferTest, GraphicAllocationTest) {
     allocateGraphic(kWidth, kHeight);
 
     uint8_t *addr[C2PlanarLayout::MAX_NUM_PLANES];
-    C2Rect rect{ 0, 0, kWidth, kHeight };
+    C2Rect rect{ kWidth, kHeight, 0, 0 };
     C2PlanarLayout layout;
     mapGraphic(rect, &layout, addr);
     ASSERT_NE(nullptr, addr[C2PlanarLayout::PLANE_Y]);
@@ -473,9 +473,9 @@ TEST_F(C2BufferTest, GraphicAllocationTest) {
     fillPlane(rect, yInfo, y, 0);
     fillPlane(rect, uInfo, u, 0);
     fillPlane(rect, vInfo, v, 0);
-    fillPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, yInfo, y, 0x12);
-    fillPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, uInfo, u, 0x34);
-    fillPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, vInfo, v, 0x56);
+    fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), yInfo, y, 0x12);
+    fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), uInfo, u, 0x34);
+    fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), vInfo, v, 0x56);
 
     unmapGraphic();
 
@@ -491,15 +491,15 @@ TEST_F(C2BufferTest, GraphicAllocationTest) {
     v = addr[C2PlanarLayout::PLANE_V];
     vInfo = layout.planes[C2PlanarLayout::PLANE_V];
 
-    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, yInfo, y, 0x12));
-    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, uInfo, u, 0x34));
-    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, vInfo, v, 0x56));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth, kHeight / 4 }, yInfo, y, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth, kHeight / 4 }, uInfo, u, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth, kHeight / 4 }, vInfo, v, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth / 4, kHeight }, yInfo, y, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth / 4, kHeight }, uInfo, u, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth / 4, kHeight }, vInfo, v, 0));
+    ASSERT_TRUE(verifyPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), yInfo, y, 0x12));
+    ASSERT_TRUE(verifyPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), uInfo, u, 0x34));
+    ASSERT_TRUE(verifyPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), vInfo, v, 0x56));
+    ASSERT_TRUE(verifyPlane({ kWidth, kHeight / 4 }, yInfo, y, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth, kHeight / 4 }, uInfo, u, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth, kHeight / 4 }, vInfo, v, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight }, yInfo, y, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight }, uInfo, u, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight }, vInfo, v, 0));
 }
 
 TEST_F(C2BufferTest, GraphicBlockPoolTest) {
@@ -534,12 +534,12 @@ TEST_F(C2BufferTest, GraphicBlockPoolTest) {
     uint8_t *v = data[C2PlanarLayout::PLANE_V];
     C2PlaneInfo vInfo = layout.planes[C2PlanarLayout::PLANE_V];
 
-    fillPlane({ 0, 0, kWidth, kHeight }, yInfo, y, 0);
-    fillPlane({ 0, 0, kWidth, kHeight }, uInfo, u, 0);
-    fillPlane({ 0, 0, kWidth, kHeight }, vInfo, v, 0);
-    fillPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, yInfo, y, 0x12);
-    fillPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, uInfo, u, 0x34);
-    fillPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, vInfo, v, 0x56);
+    fillPlane({ kWidth, kHeight }, yInfo, y, 0);
+    fillPlane({ kWidth, kHeight }, uInfo, u, 0);
+    fillPlane({ kWidth, kHeight }, vInfo, v, 0);
+    fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), yInfo, y, 0x12);
+    fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), uInfo, u, 0x34);
+    fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), vInfo, v, 0x56);
 
     C2Fence fence;
     C2ConstGraphicBlock constBlock = block->share(
@@ -563,15 +563,15 @@ TEST_F(C2BufferTest, GraphicBlockPoolTest) {
     const uint8_t *cv = constData[C2PlanarLayout::PLANE_V];
     vInfo = layout.planes[C2PlanarLayout::PLANE_V];
 
-    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, yInfo, cy, 0x12));
-    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, uInfo, cu, 0x34));
-    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight / 4, kWidth / 2, kHeight / 2 }, vInfo, cv, 0x56));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth, kHeight / 4 }, yInfo, cy, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth, kHeight / 4 }, uInfo, cu, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth, kHeight / 4 }, vInfo, cv, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth / 4, kHeight }, yInfo, cy, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth / 4, kHeight }, uInfo, cu, 0));
-    ASSERT_TRUE(verifyPlane({ 0, 0, kWidth / 4, kHeight }, vInfo, cv, 0));
+    ASSERT_TRUE(verifyPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), yInfo, cy, 0x12));
+    ASSERT_TRUE(verifyPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), uInfo, cu, 0x34));
+    ASSERT_TRUE(verifyPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), vInfo, cv, 0x56));
+    ASSERT_TRUE(verifyPlane({ kWidth, kHeight / 4 }, yInfo, cy, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth, kHeight / 4 }, uInfo, cu, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth, kHeight / 4 }, vInfo, cv, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight }, yInfo, cy, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight }, uInfo, cu, 0));
+    ASSERT_TRUE(verifyPlane({ kWidth / 4, kHeight }, vInfo, cv, 0));
 }
 
 class BufferData : public C2BufferData {

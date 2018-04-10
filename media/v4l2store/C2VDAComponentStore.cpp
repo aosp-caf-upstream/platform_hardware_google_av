@@ -275,11 +275,11 @@ c2_status_t C2VDAComponentStore::ComponentLoader::fetchModule(
 
 C2VDAComponentStore::C2VDAComponentStore() {
     // TODO: move this also into a .so so it can be updated
-    mComponents.emplace(std::piecewise_construct, std::forward_as_tuple("c2.v4l2.h264.decoder"),
+    mComponents.emplace(std::piecewise_construct, std::forward_as_tuple("c2.vda.avc.decoder"),
                         std::forward_as_tuple("libv4l2_codec2.so", C2VDACodec::H264));
-    mComponents.emplace(std::piecewise_construct, std::forward_as_tuple("c2.v4l2.vp8.decoder"),
+    mComponents.emplace(std::piecewise_construct, std::forward_as_tuple("c2.vda.vp8.decoder"),
                         std::forward_as_tuple("libv4l2_codec2.so", C2VDACodec::VP8));
-    mComponents.emplace(std::piecewise_construct, std::forward_as_tuple("c2.v4l2.vp9.decoder"),
+    mComponents.emplace(std::piecewise_construct, std::forward_as_tuple("c2.vda.vp9.decoder"),
                         std::forward_as_tuple("libv4l2_codec2.so", C2VDACodec::VP9));
 }
 

@@ -85,7 +85,6 @@ C2ENUM(C2DomainKind, uint32_t,
 
 typedef C2GlobalParam<C2Info, C2SimpleValueStruct<C2DomainKind>, kParamIndexDomain> C2ComponentDomainInfo;
 // typedef C2GlobalParam<C2Info, C2Uint32Value, kParamIndexDomain> C2ComponentDomainInfo;
-//DESCRIBE_TEMPLATED_C2STRUCT(C2SimpleValueStruct<C2DomainKind>, { C2FIELD(mValue, "value") });
 
 // read-only
 typedef C2GlobalParam<C2Info, C2Uint32Array, kParamIndexSupportedParams> C2SupportedParamsInfo;
@@ -260,4 +259,4 @@ typedef C2StreamParam<C2Tuning, C2VideoSizeStruct, kParamIndexVideoSizeTuning> C
 
 /// @}
 
-#endif
+#endif  // C2CONFIG_H_
