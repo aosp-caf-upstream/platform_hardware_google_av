@@ -686,6 +686,7 @@ Status objcpy(FrameData* d, const C2FrameData& s,
     for (const std::shared_ptr<C2Buffer>& sBuffer : s.buffers) {
         Buffer& dBuffer = d->buffers[i++];
         if (!sBuffer) {
+            // TODO: this should be okay
             ALOGE("Null C2Buffer");
             return Status::BAD_VALUE;
         }

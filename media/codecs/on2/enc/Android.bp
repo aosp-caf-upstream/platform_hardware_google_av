@@ -1,0 +1,60 @@
+cc_library_shared {
+    name: "libstagefright_soft_c2vp9enc",
+    vendor_available: true,
+    srcs: ["C2SoftVp9Enc.cpp", "C2SoftVpxEnc.cpp",],
+
+    cflags: ["-Wall", "-Werror"],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+        diag: {
+            cfi: true,
+        },
+    },
+
+    static_libs: ["libvpx"],
+
+    shared_libs: [
+        "liblog",
+        "libstagefright_codec2",
+        "libstagefright_codec2_vndk",
+        "libstagefright_foundation",
+        "libstagefright_simple_c2component",
+        "libutils",
+    ],
+}
+
+cc_library_shared {
+    name: "libstagefright_soft_c2vp8enc",
+    vendor_available: true,
+
+    srcs: ["C2SoftVp8Enc.cpp", "C2SoftVpxEnc.cpp",],
+
+    cflags: ["-Wall", "-Werror"],
+
+    sanitize: {
+        misc_undefined: [
+            "signed-integer-overflow",
+            "unsigned-integer-overflow",
+        ],
+        cfi: true,
+        diag: {
+            cfi: true,
+        },
+    },
+
+    static_libs: ["libvpx"],
+
+    shared_libs: [
+        "liblog",
+        "libstagefright_codec2",
+        "libstagefright_codec2_vndk",
+        "libstagefright_foundation",
+        "libstagefright_simple_c2component",
+        "libutils",
+    ],
+}

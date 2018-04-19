@@ -446,7 +446,7 @@ public:
     // otherwise, do not copy anything, and return false.
     inline bool updateFrom(const C2Param &other) {
         if (other._mSize <= _mSize && other._mIndex == _mIndex && _mSize > 0) {
-            memcpy(this, &other, _mSize);
+            memcpy(this, &other, other._mSize);
             return true;
         }
         return false;
@@ -620,6 +620,7 @@ struct _C2FieldId {
 
 private:
     friend struct _C2ParamInspector;
+    friend struct C2FieldDescriptor;
 
     uint32_t _mOffset; // offset of field
     uint32_t _mSize;   // size of field
@@ -866,15 +867,22 @@ struct C2FieldDescriptor {
     template<typename B>
     static NamedValuesType namedValuesFor(const B &);
 
+private:
+    template<typename B, bool enabled=std::is_arithmetic<B>::value || std::is_enum<B>::value>
+    struct C2_HIDE _NamedValuesGetter;
+
+public:
     inline C2FieldDescriptor(uint32_t type, uint32_t extent, C2String name, size_t offset, size_t size)
         : _mType((type_t)type), _mExtent(extent), _mName(name), _mFieldId(offset, size) { }
+
+    inline C2FieldDescriptor(const C2FieldDescriptor &) = default;
 
     template<typename T, class B=typename std::remove_extent<T>::type>
     inline C2FieldDescriptor(const T* offset, const char *name)
         : _mType(this->GetType((B*)nullptr)),
           _mExtent(std::is_array<T>::value ? std::extent<T>::value : 1),
           _mName(name),
-          _mNamedValues(namedValuesFor(*(B*)0)),
+          _mNamedValues(_NamedValuesGetter<B>::getNamedValues()),
           _mFieldId(offset) {}
 
 /*
@@ -911,6 +919,14 @@ struct C2FieldDescriptor {
 #endif
 
 private:
+    /**
+     * Construct an offseted field descriptor.
+     */
+    inline C2FieldDescriptor(const C2FieldDescriptor &desc, size_t offset)
+        : _mType(desc._mType), _mExtent(desc._mExtent),
+          _mName(desc._mName), _mNamedValues(desc._mNamedValues),
+          _mFieldId(desc._mFieldId._mOffset + offset, desc._mFieldId._mSize) { }
+
     type_t _mType;
     uint32_t _mExtent; // the last member can be arbitrary length if it is T[] array,
                        // extending to the end of the parameter (this is marked with
@@ -951,6 +967,21 @@ private:
     }
 
     friend struct _C2ParamInspector;
+};
+
+// no named values for compound types
+template<typename B>
+struct C2FieldDescriptor::_NamedValuesGetter<B, false> {
+    inline static C2FieldDescriptor::NamedValuesType getNamedValues() {
+        return NamedValuesType();
+    }
+};
+
+template<typename B>
+struct C2FieldDescriptor::_NamedValuesGetter<B, true> {
+    inline static C2FieldDescriptor::NamedValuesType getNamedValues() {
+        return C2FieldDescriptor::namedValuesFor(*(B*)nullptr);
+    }
 };
 
 #define DEFINE_NO_NAMED_VALUES_FOR(type) \

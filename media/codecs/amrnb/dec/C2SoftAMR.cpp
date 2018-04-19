@@ -60,6 +60,11 @@ C2SoftAMR::C2SoftAMR(const char *name, c2_node_id_t id)
       mAmrHandle(nullptr),
       mDecoderBuf(nullptr),
       mDecoderCookie(nullptr) {
+#ifdef AMRNB
+    mIsWide = false;
+#else
+    mIsWide = true;
+#endif
 }
 
 C2SoftAMR::~C2SoftAMR() {
@@ -89,12 +94,15 @@ void C2SoftAMR::onReset() {
 
 void C2SoftAMR::onRelease() {
     if (!mIsWide) {
-        GSMDecodeFrameExit(&mAmrHandle);
+        if (mAmrHandle) {
+            GSMDecodeFrameExit(&mAmrHandle);
+        }
         mAmrHandle = nullptr;
     } else {
-        free(mDecoderBuf);
+        if (mDecoderBuf) {
+            free(mDecoderBuf);
+        }
         mDecoderBuf = nullptr;
-
         mAmrHandle = nullptr;
         mDecoderCookie = nullptr;
     }
@@ -105,11 +113,6 @@ c2_status_t C2SoftAMR::onFlush_sm() {
 }
 
 status_t C2SoftAMR::initDecoder() {
-#ifdef AMRNB
-    mIsWide = false;
-#else
-    mIsWide = true;
-#endif
     if (!mIsWide) {
         if (GSMInitDecode(&mAmrHandle, (int8_t *)"AMRNBDecoder"))
             return UNKNOWN_ERROR;
@@ -157,7 +160,9 @@ static status_t calculateNumFrames(const uint8 *input, size_t inSize,
     for (size_t k = 0; k < inSize;) {
         int16_t FM = ((input[0] >> 3) & 0x0f);
         size_t frameSize = getFrameSize(isWide, FM);
-        if (frameSize == 0) return UNKNOWN_ERROR;
+        if (frameSize == 0) {
+            return UNKNOWN_ERROR;
+        }
         if ((inSize - k) >= frameSize) {
             input += frameSize;
             k += frameSize;
@@ -302,7 +307,7 @@ void C2SoftAMR::process(
 c2_status_t C2SoftAMR::drain(
         uint32_t drainMode,
         const std::shared_ptr<C2BlockPool> &pool) {
-    (void) pool;
+    (void)pool;
     if (drainMode == NO_DRAIN) {
         ALOGW("drain with NO_DRAIN: no-op");
         return C2_OK;

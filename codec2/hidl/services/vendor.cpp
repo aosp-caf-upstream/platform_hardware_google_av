@@ -27,6 +27,7 @@
 
 #include <codec2/hidl/1.0/ComponentStore.h>
 #include <hidl/HidlTransportSupport.h>
+#include <binder/ProcessState.h>
 #include <minijail.h>
 
 #include <C2Component.h>
@@ -105,6 +106,10 @@ int main(int /* argc */, char** /* argv */) {
 
     signal(SIGPIPE, SIG_IGN);
     android::SetUpMinijail(kBaseSeccompPolicyPath, kExtSeccompPolicyPath);
+
+    // vndbinder is needed by BufferQueue.
+    android::ProcessState::initWithDriver("/dev/vndbinder");
+    android::ProcessState::self()->startThreadPool();
 
     // Extra threads may be needed to handle a stacked IPC sequence that
     // contains alternating binder and hwbinder calls. (See b/35283480.)

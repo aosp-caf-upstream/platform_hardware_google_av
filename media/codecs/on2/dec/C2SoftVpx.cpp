@@ -68,9 +68,6 @@ c2_status_t C2SoftVpx::onInit() {
 }
 
 c2_status_t C2SoftVpx::onStop() {
-    (void) onFlush_sm();
-    destroyDecoder();
-
     mSignalledError = false;
     mSignalledOutputEos = false;
 
@@ -78,8 +75,14 @@ c2_status_t C2SoftVpx::onStop() {
 }
 
 void C2SoftVpx::onReset() {
-    (void) onStop();
-    (void) initDecoder();
+    (void)onStop();
+    c2_status_t err = onFlush_sm();
+    if (err != C2_OK)
+    {
+        ALOGW("Failed to flush decoder. Try to hard reset decoder");
+        destroyDecoder();
+        (void)initDecoder();
+    }
 }
 
 void C2SoftVpx::onRelease() {
@@ -132,7 +135,9 @@ status_t C2SoftVpx::initDecoder() {
     mSignalledOutputEos = false;
     mSignalledError = false;
 
-    mCodecCtx = new vpx_codec_ctx_t;
+    if (!mCodecCtx) {
+        mCodecCtx = new vpx_codec_ctx_t;
+    }
 
     vpx_codec_dec_cfg_t cfg;
     memset(&cfg, 0, sizeof(vpx_codec_dec_cfg_t));

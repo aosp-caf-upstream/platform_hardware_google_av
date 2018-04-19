@@ -90,6 +90,12 @@ private:
     status_t setupInputSurface(const std::shared_ptr<InputSurfaceWrapper> &surface);
     void setParameters(const sp<AMessage> &params);
 
+    // initializes the standard MediaCodec to Codec 2.0 params mapping
+    void initializeStandardParams();
+
+    // filters out vendor and standard parameters and returns them in a separate message
+    sp<AMessage> filterParameters(const sp<AMessage> &params) const;
+
     void setDeadline(const TimePoint &deadline, const char *name);
 
     enum {
@@ -152,12 +158,17 @@ private:
 
     Mutexed<State> mState;
     std::shared_ptr<CCodecBufferChannel> mChannel;
+
     std::shared_ptr<Codec2Client> mClient;
-    std::shared_ptr<Codec2Client::Listener> mListener;
+    std::shared_ptr<Codec2Client::Listener> mClientListener;
+    struct ClientListener;
+
     Mutexed<NamedTimePoint> mDeadline;
     Mutexed<Formats> mFormats;
     Mutexed<std::list<std::unique_ptr<C2Work>>> mWorkDoneQueue;
     Mutexed<ReflectedParamUpdater> mParamUpdater;
+    // standard MediaCodec to Codec 2.0 params mapping
+    std::map<std::string, std::string> mStandardParams;
 
     DISALLOW_EVIL_CONSTRUCTORS(CCodec);
 };

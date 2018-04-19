@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,23 +14,18 @@
  * limitations under the License.
  */
 
-#ifndef C2_SOFT_AAC_ENC_H_
+#ifndef C2_SOFT_MPEG4_ENC_H__
+#define C2_SOFT_MPEG4_ENC_H__
 
-#define C2_SOFT_AAC_ENC_H_
-
-#include <SimpleC2Component.h>
 #include <media/stagefright/foundation/ABase.h>
+#include <SimpleC2Component.h>
 
-#include "aacenc_lib.h"
+#include "mp4enc_api.h"
 
 namespace android {
 
-class C2SoftAacEnc : public SimpleC2Component {
-public:
-    class IntfImpl;
-
-    C2SoftAacEnc(const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl);
-    virtual ~C2SoftAacEnc();
+struct C2SoftMpeg4Enc : public SimpleC2Component {
+    C2SoftMpeg4Enc(const char *name, c2_node_id_t id);
 
     // From SimpleC2Component
     c2_status_t onInit() override;
@@ -45,30 +40,36 @@ public:
             uint32_t drainMode,
             const std::shared_ptr<C2BlockPool> &pool) override;
 
+protected:
+    virtual ~C2SoftMpeg4Enc();
+
 private:
-    std::shared_ptr<IntfImpl> mIntf;
+    tagvideoEncControls *mHandle;
+    tagvideoEncOptions  *mEncParams;
 
-    HANDLE_AACENCODER mAACEncoder;
+    bool     mStarted;
+    bool     mSignalledOutputEos;
+    bool     mSignalledError;
 
-    int32_t mSBRMode;
-    int32_t mSBRRatio;
-    AUDIO_OBJECT_TYPE mAACProfile;
-    UINT mNumBytesPerInputFrame;
-    UINT mOutBufferSize;
+    uint32_t mWidth;
+    uint32_t mHeight;
+    uint32_t mFramerate;
+    uint32_t mBitrate;
+    uint32_t mOutBufferSize;
+    // 1: all I-frames, <0: infinite
+    int32_t  mKeyFrameInterval;
+    int64_t  mNumInputFrames;
+    MP4EncodingMode mEncodeMode;
 
-    bool mSentCodecSpecificData;
-    size_t mInputSize;
-    c2_cntr64_t mInputTimeUs;
+    std::list<std::unique_ptr<uint8_t[]>> mFreeConversionBuffers;
+    std::list<std::unique_ptr<uint8_t[]>> mConversionBuffersInUse;
 
-    bool mSignalledError;
+    c2_status_t initEncParams();
+    c2_status_t initEncoder();
 
-    status_t initEncoder();
-
-    status_t setAudioParams();
-
-    DISALLOW_EVIL_CONSTRUCTORS(C2SoftAacEnc);
+    DISALLOW_EVIL_CONSTRUCTORS(C2SoftMpeg4Enc);
 };
 
 }  // namespace android
 
-#endif  // C2_SOFT_AAC_ENC_H_
+#endif  // C2_SOFT_MPEG4_ENC_H__
