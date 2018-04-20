@@ -30,6 +30,7 @@
 
 #include <C2PlatformSupport.h>
 #include <C2BufferPriv.h>
+#include <C2Debug.h>
 #include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
 #include <hidl/HidlSupport.h>
 #include <cutils/properties.h>
@@ -60,24 +61,24 @@ constexpr const char* kClientNames[] = {
         "software",
     };
 
-std::vector<std::shared_ptr<Codec2Client>> gClients;
+typedef std::array<
+        std::shared_ptr<Codec2Client>,
+        std::extent<decltype(kClientNames)>::value> ClientList;
 
-void prepareClients() {
-    static std::mutex clientsMutex;
-    static bool clientsInitialized = false;
-
-    std::lock_guard<std::mutex> lock(clientsMutex);
-    if (clientsInitialized) {
-        return;
-    }
-    gClients.reserve(std::extent<decltype(kClientNames)>::value);
-    for (const char* clientName : kClientNames) {
-        gClients.emplace_back(Codec2Client::CreateFromService(clientName));
-    }
-    clientsInitialized = true;
+// Convenience methods to obtain known clients.
+std::shared_ptr<Codec2Client> getClient(size_t index) {
+    return Codec2Client::CreateFromService(kClientNames[index]);
 }
 
-} // unnamed namespace
+ClientList getClientList() {
+    ClientList list;
+    for (size_t i = 0; i < list.size(); ++i) {
+        list[i] = getClient(i);
+    }
+    return list;
+}
+
+} // unnamed
 
 // Codec2ConfigurableClient
 
@@ -329,18 +330,33 @@ c2_status_t Codec2Client::createComponent(
     // TODO: Add support for Bufferpool
 
     struct HidlListener : public IComponentListener {
-        std::shared_ptr<Codec2Client::Listener> base;
-        std::weak_ptr<Codec2Client::Component> component;
+        std::weak_ptr<Component> component;
+        std::weak_ptr<Listener> base;
 
         virtual Return<void> onWorkDone(const WorkBundle& workBundle) override {
             std::list<std::unique_ptr<C2Work>> workItems;
             c2_status_t status = objcpy(&workItems, workBundle);
             if (status != C2_OK) {
                 ALOGE("onWorkDone -- received corrupted WorkBundle. "
-                        "Error code: %d", static_cast<int>(status));
+                        "status = %d.", static_cast<int>(status));
                 return Void();
             }
-            base->onWorkDone(component, workItems);
+            // release input buffers potentially held by the component from queue
+            std::shared_ptr<Codec2Client::Component> componentStrong = component.lock();
+            if (componentStrong) {
+                std::vector<uint64_t> inputDone;
+                for (const std::unique_ptr<C2Work> &work : workItems) {
+                    if (work) {
+                        inputDone.emplace_back(work->input.ordinal.frameIndex.peeku());
+                    }
+                }
+                componentStrong->handleOnWorkDone(inputDone);
+            }
+            if (std::shared_ptr<Codec2Client::Listener> listener = base.lock()) {
+                listener->onWorkDone(component, workItems);
+            } else {
+                ALOGW("onWorkDone -- listener died.");
+            }
             return Void();
         }
 
@@ -354,21 +370,29 @@ c2_status_t Codec2Client::createComponent(
                 status = objcpy(&c2SettingResult, settingResults[i]);
                 if (status != C2_OK) {
                     ALOGE("onTripped -- received corrupted SettingResult. "
-                            "Error code: %d", static_cast<int>(status));
+                            "status = %d.", static_cast<int>(status));
                     return Void();
                 }
                 c2SettingResults[i] = std::move(c2SettingResult);
             }
-            base->onTripped(component, c2SettingResults);
+            if (std::shared_ptr<Codec2Client::Listener> listener = base.lock()) {
+                listener->onTripped(component, c2SettingResults);
+            } else {
+                ALOGW("onTripped -- listener died.");
+            }
             return Void();
         }
 
         virtual Return<void> onError(Status s, uint32_t errorCode) override {
-            ALOGE("onError -- status = %d, errorCode = %u. ",
+            ALOGE("onError -- status = %d, errorCode = %u.",
                     static_cast<int>(s),
                     static_cast<unsigned>(errorCode));
-            base->onError(component, s == Status::OK ?
-                    errorCode : static_cast<c2_status_t>(s));
+            if (std::shared_ptr<Listener> listener = base.lock()) {
+                listener->onError(component, s == Status::OK ?
+                        errorCode : static_cast<c2_status_t>(s));
+            } else {
+                ALOGW("onError -- listener died.");
+            }
             return Void();
         }
     };
@@ -385,8 +409,6 @@ c2_status_t Codec2Client::createComponent(
                     const sp<IComponent>& c) {
                 status = static_cast<c2_status_t>(s);
                 if (status != C2_OK) {
-                    ALOGE("createComponent -- call failed. "
-                            "Error code = %d", static_cast<int>(status));
                     return;
                 }
                 *component = std::make_shared<Codec2Client::Component>(c);
@@ -395,6 +417,21 @@ c2_status_t Codec2Client::createComponent(
     if (!transStatus.isOk()) {
         ALOGE("createComponent -- failed transaction.");
         return C2_TRANSACTION_FAILED;
+    }
+
+    if (status != C2_OK) {
+        return status;
+    }
+
+    if (!*component) {
+        ALOGE("createComponent -- null component.");
+        return C2_CORRUPTED;
+    }
+
+    status = (*component)->setDeathListener(*component, listener);
+    if (status != C2_OK) {
+        ALOGE("createComponent -- setDeathListener returned error: %d.",
+                static_cast<int>(status));
     }
     return status;
 }
@@ -545,33 +582,42 @@ std::shared_ptr<Codec2Client::Component>
         const char* componentName,
         const std::shared_ptr<Listener>& listener,
         std::shared_ptr<Codec2Client>* owner) {
-    prepareClients();
-
     c2_status_t status;
     std::shared_ptr<Component> component;
 
-    // Cache the mapping componentName -> Codec2Client
-    static std::mutex component2ClientMutex;
-    static std::map<std::string, Codec2Client*> component2Client;
+    // Cache the mapping componentName -> index of Codec2Client in
+    // getClientList().
+    static std::mutex component2IndexMutex;
+    static std::map<std::string, size_t> component2Index;
 
-    std::unique_lock<std::mutex> lock(component2ClientMutex);
-    std::map<C2String, Codec2Client*>::const_iterator it =
-            component2Client.find(componentName);
-    if (it != component2Client.end()) {
-        Codec2Client *client = it->second;
-        lock.unlock();
-
-        status = client->createComponent(
-                componentName,
-                listener,
-                &component);
-        if (status == C2_OK) {
-            return component;
+    component2IndexMutex.lock();
+    std::map<std::string, size_t>::const_iterator it =
+            component2Index.find(componentName);
+    if (it != component2Index.end()) {
+        std::shared_ptr<Codec2Client> client = getClient(it->second);
+        component2IndexMutex.unlock();
+        if (client) {
+            status = client->createComponent(
+                    componentName,
+                    listener,
+                    &component);
+            if (status == C2_OK) {
+                if (owner) {
+                    *owner = client;
+                }
+                return component;
+            }
         }
-        return nullptr;
+        ALOGW("IComponentStore instance that hosted component \"%s\" "
+                "failed to create the component. Retrying...", componentName);
+    } else {
+        component2IndexMutex.unlock();
     }
-    for (const std::shared_ptr<Codec2Client>& client : gClients) {
+
+    size_t index = 0;
+    for (const std::shared_ptr<Codec2Client>& client : getClientList()) {
         if (!client) {
+            ++index;
             continue;
         }
         status = client->createComponent(
@@ -579,30 +625,40 @@ std::shared_ptr<Codec2Client::Component>
                 listener,
                 &component);
         if (status == C2_OK) {
+            component2IndexMutex.lock();
+            component2Index[componentName] = index;
+            component2IndexMutex.unlock();
             if (owner) {
                 *owner = client;
             }
-            component2Client.emplace(componentName, client.get());
             return component;
+        } else if (status != C2_NOT_FOUND) {
+            ALOGE("CreateComponentByName -- failed to create component \"%s\": "
+                    " error code = %d.",
+                    componentName, static_cast<int>(status));
+            return nullptr;
         }
+        ++index;
     }
+
+    ALOGW("CreateComponentByName -- component \"%s\" not found.",
+            componentName);
     return nullptr;
 }
 
 const std::vector<C2Component::Traits>& Codec2Client::ListComponents() {
-    prepareClients();
-
     static std::vector<C2Component::Traits> traitsList = [](){
         std::vector<C2Component::Traits> list;
         size_t listSize = 0;
-        for (const std::shared_ptr<Codec2Client>& client : gClients) {
+        ClientList clientList = getClientList();
+        for (const std::shared_ptr<Codec2Client>& client : clientList) {
             if (!client) {
                 continue;
             }
             listSize += client->listComponents().size();
         }
         list.reserve(listSize);
-        for (const std::shared_ptr<Codec2Client>& client : gClients) {
+        for (const std::shared_ptr<Codec2Client>& client : clientList) {
             if (!client) {
                 continue;
             }
@@ -659,8 +715,42 @@ c2_status_t Codec2Client::Component::createBlockPool(
     return status;
 }
 
+void Codec2Client::Component::handleOnWorkDone(const std::vector<uint64_t> &inputDone) {
+    std::lock_guard<std::mutex> lock(mInputBuffersMutex);
+    for (uint64_t inputIndex : inputDone) {
+        auto it = mInputBuffers.find(inputIndex);
+        if (it == mInputBuffers.end()) {
+            ALOGI("unknown input index %llu in onWorkDone", (long long)inputIndex);
+        } else {
+            ALOGV("done with input index %llu with %zu buffers",
+                    (long long)inputIndex, it->second.size());
+            mInputBuffers.erase(it);
+        }
+    }
+}
+
 c2_status_t Codec2Client::Component::queue(
         std::list<std::unique_ptr<C2Work>>* const items) {
+    // remember input buffers queued to hold reference to them
+    {
+        std::lock_guard<std::mutex> lock(mInputBuffersMutex);
+        for (const std::unique_ptr<C2Work> &work : *items) {
+            if (!work) {
+                continue;
+            }
+
+            uint64_t inputIndex = work->input.ordinal.frameIndex.peeku();
+            auto res = mInputBuffers.emplace(inputIndex, work->input.buffers);
+            if (!res.second) {
+                ALOGI("duplicate input index %llu in queue", (long long)inputIndex);
+                // TODO: append? - for now we are replacing
+                res.first->second = work->input.buffers;
+            }
+            ALOGV("qeueing input index %llu with %zu buffers",
+                    (long long)inputIndex, work->input.buffers.size());
+        }
+    }
+
     WorkBundle workBundle;
     Status hidlStatus = objcpy(&workBundle, *items);
     if (hidlStatus != Status::OK) {
@@ -781,8 +871,9 @@ c2_status_t Codec2Client::Component::release() {
 }
 
 c2_status_t Codec2Client::Component::setOutputSurface(
+        uint64_t blockPoolId,
         const sp<IGraphicBufferProducer>& surface) {
-    Return<Status> transStatus = base()->setOutputSurface(surface);
+    Return<Status> transStatus = base()->setOutputSurface(blockPoolId, surface);
     if (!transStatus.isOk()) {
         ALOGE("setOutputSurface -- transaction failed.");
         return C2_TRANSACTION_FAILED;
@@ -920,6 +1011,44 @@ c2_status_t Codec2Client::Component::createLocalBlockPool(
                 res);
     }
     return res;
+}
+
+c2_status_t Codec2Client::Component::setDeathListener(
+        const std::shared_ptr<Component>& component,
+        const std::shared_ptr<Listener>& listener) {
+
+    struct HidlDeathRecipient : public hardware::hidl_death_recipient {
+        std::weak_ptr<Component> component;
+        std::weak_ptr<Listener> base;
+
+        virtual void serviceDied(
+                uint64_t /* cookie */,
+                const wp<::android::hidl::base::V1_0::IBase>& /* who */
+                ) override {
+            if (std::shared_ptr<Codec2Client::Listener> listener = base.lock()) {
+                listener->onDeath(component);
+            } else {
+                ALOGW("onDeath -- listener died.");
+            }
+        }
+    };
+
+    sp<HidlDeathRecipient> deathRecipient = new HidlDeathRecipient();
+    deathRecipient->base = listener;
+    deathRecipient->component = component;
+
+    component->mDeathRecipient = deathRecipient;
+    Return<bool> transResult = component->base()->linkToDeath(
+            component->mDeathRecipient, 0);
+    if (!transResult.isOk()) {
+        ALOGE("setDeathListener -- failed transaction: linkToDeath.");
+        return C2_TRANSACTION_FAILED;
+    }
+    if (!static_cast<bool>(transResult)) {
+        ALOGE("setDeathListener -- linkToDeath call failed.");
+        return C2_CORRUPTED;
+    }
+    return C2_OK;
 }
 
 // Codec2Client::InputSurface

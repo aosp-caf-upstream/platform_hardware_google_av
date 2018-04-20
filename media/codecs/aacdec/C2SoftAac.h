@@ -27,7 +27,9 @@
 namespace android {
 
 struct C2SoftAac : public SimpleC2Component {
-    C2SoftAac(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftAac(const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftAac();
 
     // From SimpleC2Component
@@ -48,9 +50,10 @@ private:
         kNumDelayBlocksMax      = 8,
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
+
     HANDLE_AACDECODER mAACDecoder;
     CStreamInfo *mStreamInfo;
-    bool mIsADTS;
     bool mIsFirst;
     size_t mInputBufferCount;
     size_t mOutputBufferCount;
@@ -79,11 +82,13 @@ private:
     void drainRingBuffer(
             const std::unique_ptr<C2Work> &work,
             const std::shared_ptr<C2BlockPool> &pool,
+            std::vector<std::unique_ptr<C2Param>> *configUpdate,
             bool eos);
     c2_status_t drainInternal(
             uint32_t drainMode,
             const std::shared_ptr<C2BlockPool> &pool,
-            const std::unique_ptr<C2Work> &work);
+            const std::unique_ptr<C2Work> &work,
+            std::vector<std::unique_ptr<C2Param>> *configUpdate = nullptr);
 
 //      delay compensation
     bool mEndOfInput;

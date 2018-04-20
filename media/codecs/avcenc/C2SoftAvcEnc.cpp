@@ -23,8 +23,10 @@
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MediaErrors.h>
 #include <media/stagefright/MetaData.h>
+
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
+#include <util/C2InterfaceHelper.h>
 
 #include "ih264_typedefs.h"
 #include "ih264e.h"
@@ -35,9 +37,93 @@
 
 namespace android {
 
+class C2SoftAvcEnc::IntfImpl : public C2InterfaceHelper {
+public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
+
+        setDerivedInstance(this);
+
+        addParameter(
+                DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::input(0u, C2FormatVideo))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::output(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+                DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                        MEDIA_MIMETYPE_VIDEO_RAW))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                        MEDIA_MIMETYPE_VIDEO_AVC))
+                .build());
+
+        addParameter(
+                DefineParam(mUsage, C2_NAME_INPUT_STREAM_USAGE_SETTING)
+                .withConstValue(new C2StreamUsageTuning::input(
+                        0u, (uint64_t)C2MemoryUsage::CPU_READ))
+                .build());
+
+        addParameter(
+                DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_SETTING)
+                .withDefault(new C2VideoSizeStreamTuning::input(0u, 320, 240))
+                .withFields({
+                    C2F(mSize, width).inRange(2, 4080, 2),
+                    C2F(mSize, height).inRange(2, 4080, 2),
+                })
+                .withSetter(SizeSetter)
+                .build());
+
+        addParameter(
+                DefineParam(mFrameRate, C2_NAME_STREAM_FRAME_RATE_SETTING)
+                .withDefault(new C2StreamFrameRateInfo::output(0u, 30.))
+                // TODO: More restriction?
+                .withFields({C2F(mFrameRate, value).greaterThan(0.)})
+                .withSetter(Setter<decltype(*mFrameRate)>::StrictValueWithNoDeps)
+                .build());
+
+        addParameter(
+                DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::output(0u, 64000))
+                .withFields({C2F(mBitrate, value).inRange(1, 12000000)})
+                .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
+
+    static C2R SizeSetter(bool mayBlock, C2P<C2VideoSizeStreamTuning::input> &me) {
+        (void)mayBlock;
+        // TODO: maybe apply block limit?
+        return me.F(me.v.width).validatePossible(me.v.width).plus(
+                me.F(me.v.height).validatePossible(me.v.height));
+    }
+
+    uint32_t getWidth() const { return mSize->width; }
+    uint32_t getHeight() const { return mSize->height; }
+    float getFrameRate() const { return mFrameRate->value; }
+    uint32_t getBitrate() const { return mBitrate->value; }
+
+private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamUsageTuning::input> mUsage;
+    std::shared_ptr<C2VideoSizeStreamTuning::input> mSize;
+    std::shared_ptr<C2StreamFrameRateInfo::output> mFrameRate;
+    std::shared_ptr<C2BitrateTuning::output> mBitrate;
+};
+
 #define ive_api_function  ih264e_api_function
 
-constexpr char kComponentName[] = "c2.google.avc.encoder";
+constexpr char COMPONENT_NAME[] = "c2.google.avc.encoder";
 
 namespace {
 
@@ -55,18 +141,6 @@ static size_t GetCPUCoreCount() {
     CHECK(cpuCoreCount >= 1);
     ALOGV("Number of CPU cores: %ld", cpuCoreCount);
     return (size_t)cpuCoreCount;
-}
-
-std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatVideo)
-            .outputFormat(C2FormatCompressed)
-            .inputMediaType(MEDIA_MIMETYPE_VIDEO_RAW)
-            .outputMediaType(MEDIA_MIMETYPE_VIDEO_AVC)
-            .build();
 }
 
 void ConvertRGBToPlanarYUV(
@@ -128,8 +202,10 @@ void ConvertRGBToPlanarYUV(
 
 }  // namespace
 
-C2SoftAvcEnc::C2SoftAvcEnc(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+C2SoftAvcEnc::C2SoftAvcEnc(
+        const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl)
+    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mUpdateFlag(0),
       mIvVideoColorFormat(IV_YUV_420P),
       mAVCEncProfile(IV_PROFILE_BASE),
@@ -139,10 +215,6 @@ C2SoftAvcEnc::C2SoftAvcEnc(const char *name, c2_node_id_t id)
       mSawOutputEOS(false),
       mSignalledError(false),
       mCodecCtx(NULL),
-      mWidth(1080),
-      mHeight(1920),
-      mFramerate(60),
-      mBitrate(20000),
       // TODO: output buffer size
       mOutBufferSize(524288) {
 
@@ -217,8 +289,8 @@ c2_status_t C2SoftAvcEnc::setDimensions() {
 
     s_dimensions_ip.e_cmd = IVE_CMD_VIDEO_CTL;
     s_dimensions_ip.e_sub_cmd = IVE_CMD_CTL_SET_DIMENSIONS;
-    s_dimensions_ip.u4_ht = mHeight;
-    s_dimensions_ip.u4_wd = mWidth;
+    s_dimensions_ip.u4_ht = mIntf->getHeight();
+    s_dimensions_ip.u4_wd = mIntf->getWidth();
 
     s_dimensions_ip.u4_timestamp_high = -1;
     s_dimensions_ip.u4_timestamp_low = -1;
@@ -266,8 +338,8 @@ c2_status_t C2SoftAvcEnc::setFrameRate() {
     s_frame_rate_ip.e_cmd = IVE_CMD_VIDEO_CTL;
     s_frame_rate_ip.e_sub_cmd = IVE_CMD_CTL_SET_FRAMERATE;
 
-    s_frame_rate_ip.u4_src_frame_rate = mFramerate;
-    s_frame_rate_ip.u4_tgt_frame_rate = mFramerate;
+    s_frame_rate_ip.u4_src_frame_rate = mIntf->getFrameRate();
+    s_frame_rate_ip.u4_tgt_frame_rate = mIntf->getFrameRate();
 
     s_frame_rate_ip.u4_timestamp_high = -1;
     s_frame_rate_ip.u4_timestamp_low = -1;
@@ -319,7 +391,7 @@ c2_status_t C2SoftAvcEnc::setBitRate() {
     s_bitrate_ip.e_cmd = IVE_CMD_VIDEO_CTL;
     s_bitrate_ip.e_sub_cmd = IVE_CMD_CTL_SET_BITRATE;
 
-    s_bitrate_ip.u4_target_bitrate = mBitrate;
+    s_bitrate_ip.u4_target_bitrate = mIntf->getBitrate();
 
     s_bitrate_ip.u4_timestamp_high = -1;
     s_bitrate_ip.u4_timestamp_low = -1;
@@ -607,7 +679,9 @@ c2_status_t C2SoftAvcEnc::initEncoder() {
 
     c2_status_t errType = C2_OK;
 
-    displaySizeY = mWidth * mHeight;
+    uint32_t width = mIntf->getWidth();
+    uint32_t height = mIntf->getHeight();
+    displaySizeY = width * height;
     if (displaySizeY > (1920 * 1088)) {
         level = 50;
     } else if (displaySizeY > (1280 * 720)) {
@@ -625,13 +699,13 @@ c2_status_t C2SoftAvcEnc::initEncoder() {
     }
     mAVCEncLevel = MAX(level, mAVCEncLevel);
 
-    mStride = mWidth;
+    mStride = width;
 
     // TODO
     mIvVideoColorFormat = IV_YUV_420P;
 
-    ALOGD("Params width %d height %d level %d colorFormat %d", mWidth,
-            mHeight, mAVCEncLevel, mIvVideoColorFormat);
+    ALOGD("Params width %d height %d level %d colorFormat %d", width,
+            height, mAVCEncLevel, mIvVideoColorFormat);
 
     /* Getting Number of MemRecords */
     {
@@ -692,8 +766,8 @@ c2_status_t C2SoftAvcEnc::initEncoder() {
         s_fill_mem_rec_ip.e_cmd = IV_CMD_FILL_NUM_MEM_REC;
         s_fill_mem_rec_ip.ps_mem_rec = mMemRecords;
         s_fill_mem_rec_ip.u4_num_mem_rec = mNumMemRecords;
-        s_fill_mem_rec_ip.u4_max_wd = mWidth;
-        s_fill_mem_rec_ip.u4_max_ht = mHeight;
+        s_fill_mem_rec_ip.u4_max_wd = width;
+        s_fill_mem_rec_ip.u4_max_ht = height;
         s_fill_mem_rec_ip.u4_max_level = mAVCEncLevel;
         s_fill_mem_rec_ip.e_color_format = DEFAULT_INP_COLOR_FORMAT;
         s_fill_mem_rec_ip.u4_max_ref_cnt = DEFAULT_MAX_REF_FRM;
@@ -747,8 +821,8 @@ c2_status_t C2SoftAvcEnc::initEncoder() {
         s_init_ip.e_cmd = IV_CMD_INIT;
         s_init_ip.u4_num_mem_rec = mNumMemRecords;
         s_init_ip.ps_mem_rec = mMemRecords;
-        s_init_ip.u4_max_wd = mWidth;
-        s_init_ip.u4_max_ht = mHeight;
+        s_init_ip.u4_max_wd = width;
+        s_init_ip.u4_max_ht = height;
         s_init_ip.u4_max_ref_cnt = DEFAULT_MAX_REF_FRM;
         s_init_ip.u4_max_reorder_cnt = DEFAULT_MAX_REORDER_FRM;
         s_init_ip.u4_max_level = mAVCEncLevel;
@@ -909,7 +983,7 @@ c2_status_t C2SoftAvcEnc::setEncodeArgs(
     }
 
     ALOGV("width = %d, height = %d", input->width(), input->height());
-    if (mWidth != input->width() || mHeight != input->height()) {
+    if (mIntf->getWidth() != input->width() || mIntf->getHeight() != input->height()) {
         return C2_BAD_VALUE;
     }
     const C2PlanarLayout &layout = input->layout();
@@ -1221,11 +1295,19 @@ c2_status_t C2SoftAvcEnc::drain(
 
 class C2SoftAvcEncFactory : public C2ComponentFactory {
 public:
+    C2SoftAvcEncFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+        GetCodec2PlatformComponentStore()->getParamReflector())) {
+    }
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftAvcEnc(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+                new C2SoftAvcEnc(COMPONENT_NAME,
+                                 id,
+                                 std::make_shared<C2SoftAvcEnc::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
@@ -1233,11 +1315,17 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+                new SimpleInterface<C2SoftAvcEnc::IntfImpl>(
+                        COMPONENT_NAME, id, std::make_shared<C2SoftAvcEnc::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftAvcEncFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

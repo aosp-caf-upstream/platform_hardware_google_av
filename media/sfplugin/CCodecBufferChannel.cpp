@@ -1580,6 +1580,7 @@ void CCodecBufferChannel::onWorkDone(const std::unique_ptr<C2Work> &work) {
 status_t CCodecBufferChannel::setSurface(const sp<Surface> &newSurface) {
     if (newSurface != nullptr) {
         newSurface->setScalingMode(NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
+        newSurface->setMaxDequeuedBufferCount(kMinBufferArraySize);
     }
 
     Mutexed<OutputSurface>::Locked output(mOutputSurface);

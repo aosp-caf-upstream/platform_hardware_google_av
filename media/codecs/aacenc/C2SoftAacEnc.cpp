@@ -21,7 +21,7 @@
 #include <inttypes.h>
 
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 #include <media/stagefright/foundation/hexdump.h>
 
@@ -29,28 +29,82 @@
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.aac.encoder";
+class C2SoftAacEnc::IntfImpl : public C2InterfaceHelper {
+public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
 
-static std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatAudio)
-            .outputFormat(C2FormatCompressed)
-            .inputMediaType(MEDIA_MIMETYPE_AUDIO_AAC)
-            .outputMediaType(MEDIA_MIMETYPE_AUDIO_RAW)
-            .build();
-}
+        setDerivedInstance(this);
+
+        addParameter(
+                DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::input(0u, C2FormatAudio))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::output(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+                DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                        MEDIA_MIMETYPE_AUDIO_RAW))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                        MEDIA_MIMETYPE_AUDIO_AAC))
+                .build());
+
+        addParameter(
+                DefineParam(mSampleRate, C2_NAME_STREAM_SAMPLE_RATE_SETTING)
+                .withDefault(new C2StreamSampleRateInfo::input(0u, 44100))
+                .withFields({C2F(mSampleRate, value).oneOf({
+                    8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
+                })})
+                .withSetter((Setter<decltype(*mSampleRate)>::StrictValueWithNoDeps))
+                .build());
+
+        addParameter(
+                DefineParam(mChannelCount, C2_NAME_STREAM_CHANNEL_COUNT_SETTING)
+                .withDefault(new C2StreamChannelCountInfo::input(0u, 1))
+                .withFields({C2F(mChannelCount, value).inRange(1, 6)})
+                .withSetter(Setter<decltype(*mChannelCount)>::StrictValueWithNoDeps)
+                .build());
+
+        addParameter(
+                DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::output(0u, 64000))
+                .withFields({C2F(mBitrate, value).inRange(8000, 960000)})
+                .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
+
+    uint32_t getSampleRate() const { return mSampleRate->value; }
+    uint32_t getChannelCount() const { return mChannelCount->value; }
+    uint32_t getBitrate() const { return mBitrate->value; }
+
+private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamSampleRateInfo::input> mSampleRate;
+    std::shared_ptr<C2StreamChannelCountInfo::input> mChannelCount;
+    std::shared_ptr<C2BitrateTuning::output> mBitrate;
+};
+
+constexpr char COMPONENT_NAME[] = "c2.google.aac.encoder";
 
 C2SoftAacEnc::C2SoftAacEnc(
         const char *name,
-        c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+        c2_node_id_t id,
+        const std::shared_ptr<IntfImpl> &intfImpl)
+    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mAACEncoder(NULL),
-      mNumChannels(1),
-      mSampleRate(44100),
-      mBitRate(64000),
       mSBRMode(-1),
       mSBRRatio(0),
       mAACProfile(AOT_AAC_LC),
@@ -138,23 +192,23 @@ status_t C2SoftAacEnc::setAudioParams() {
     // in reponse to setParameter calls.
 
     ALOGV("setAudioParams: %u Hz, %u channels, %u bps, %i sbr mode, %i sbr ratio",
-         mSampleRate, mNumChannels, mBitRate, mSBRMode, mSBRRatio);
+         mIntf->getSampleRate(), mIntf->getChannelCount(), mIntf->getBitrate(), mSBRMode, mSBRRatio);
 
     if (AACENC_OK != aacEncoder_SetParam(mAACEncoder, AACENC_AOT, mAACProfile)) {
         ALOGE("Failed to set AAC encoder parameters");
         return UNKNOWN_ERROR;
     }
 
-    if (AACENC_OK != aacEncoder_SetParam(mAACEncoder, AACENC_SAMPLERATE, mSampleRate)) {
+    if (AACENC_OK != aacEncoder_SetParam(mAACEncoder, AACENC_SAMPLERATE, mIntf->getSampleRate())) {
         ALOGE("Failed to set AAC encoder parameters");
         return UNKNOWN_ERROR;
     }
-    if (AACENC_OK != aacEncoder_SetParam(mAACEncoder, AACENC_BITRATE, mBitRate)) {
+    if (AACENC_OK != aacEncoder_SetParam(mAACEncoder, AACENC_BITRATE, mIntf->getBitrate())) {
         ALOGE("Failed to set AAC encoder parameters");
         return UNKNOWN_ERROR;
     }
     if (AACENC_OK != aacEncoder_SetParam(mAACEncoder, AACENC_CHANNELMODE,
-            getChannelMode(mNumChannels))) {
+            getChannelMode(mIntf->getChannelCount()))) {
         ALOGE("Failed to set AAC encoder parameters");
         return UNKNOWN_ERROR;
     }
@@ -195,6 +249,9 @@ void C2SoftAacEnc::process(
     }
     bool eos = (work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0;
 
+    uint32_t sampleRate = mIntf->getSampleRate();
+    uint32_t channelCount = mIntf->getChannelCount();
+
     if (!mSentCodecSpecificData) {
         // The very first thing we want to output is the codec specific
         // data.
@@ -206,9 +263,10 @@ void C2SoftAacEnc::process(
             return;
         }
 
+        uint32_t bitrate = mIntf->getBitrate();
         uint32_t actualBitRate = aacEncoder_GetParam(mAACEncoder, AACENC_BITRATE);
-        if (mBitRate != actualBitRate) {
-            ALOGW("Requested bitrate %u unsupported, using %u", mBitRate, actualBitRate);
+        if (bitrate != actualBitRate) {
+            ALOGW("Requested bitrate %u unsupported, using %u", bitrate, actualBitRate);
         }
 
         AACENC_InfoStruct encInfo;
@@ -230,7 +288,7 @@ void C2SoftAacEnc::process(
         work->worklets.front()->output.configUpdate.push_back(std::move(csd));
 
         mOutBufferSize = encInfo.maxOutBufBytes;
-        mNumBytesPerInputFrame = encInfo.frameLength * mNumChannels * sizeof(int16_t);
+        mNumBytesPerInputFrame = encInfo.frameLength * channelCount * sizeof(int16_t);
         mInputTimeUs = work->input.ordinal.timestamp;
 
         mSentCodecSpecificData = true;
@@ -312,10 +370,10 @@ void C2SoftAacEnc::process(
                 mInputSize = 0;
                 int consumed = ((view.capacity() / sizeof(int16_t)) - inargs.numInSamples);
                 mInputTimeUs = work->input.ordinal.timestamp
-                        + (consumed * 1000000ll / mNumChannels / mSampleRate);
+                        + (consumed * 1000000ll / channelCount / sampleRate);
             } else {
                 mInputSize += outargs.numInSamples * sizeof(int16_t);
-                mInputTimeUs += outargs.numInSamples * 1000000ll / mNumChannels / mSampleRate;
+                mInputTimeUs += outargs.numInSamples * 1000000ll / channelCount / sampleRate;
             }
             outPtr += outargs.numOutBytes;
             nOutputBytes += outargs.numOutBytes;
@@ -392,22 +450,36 @@ c2_status_t C2SoftAacEnc::drain(
 
 class C2SoftAacEncFactory : public C2ComponentFactory {
 public:
+    C2SoftAacEncFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+            GetCodec2PlatformComponentStore()->getParamReflector())) {
+    }
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftAacEnc(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+                new C2SoftAacEnc(COMPONENT_NAME,
+                                 id,
+                                 std::make_shared<C2SoftAacEnc::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
     virtual c2_status_t createInterface(
             c2_node_id_t id, std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+                new SimpleInterface<C2SoftAacEnc::IntfImpl>(
+                        COMPONENT_NAME, id, std::make_shared<C2SoftAacEnc::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftAacEncFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

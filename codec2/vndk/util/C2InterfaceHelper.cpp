@@ -70,6 +70,56 @@ public:
     Impl(ParamRef param, C2StringLiteral name, C2StructDescriptor &&strukt)
         : mParam(param), mName(name), _mStruct(strukt) { }
 
+    Impl(Impl&&) = default;
+
+    void addDownDependency(C2Param::Index index) {
+        mDownDependencies.push_back(index);
+    }
+
+    C2InterfaceHelper::ParamHelper::attrib_t& attrib() {
+        return mAttrib;
+    }
+
+    void build() {
+        // move dependencies into descriptor
+        mDescriptor = std::make_shared<C2ParamDescriptor>(
+                index(), (C2ParamDescriptor::attrib_t)mAttrib,
+                std::move(mName), std::move(mDependencies));
+    }
+
+    void createFieldsAndSupportedValues(const std::shared_ptr<C2ParamReflector> &reflector) {
+        for (const C2FieldUtils::Info &f :
+                C2FieldUtils::enumerateFields(*mDefaultValue, reflector)) {
+            if (!f.isArithmetic()) {
+                continue;
+            }
+            std::unique_ptr<C2FieldSupportedValues> fsvPointer;
+
+            // create a breakable structure
+            do {
+                C2FieldSupportedValues fsv;
+                switch (f.type()) {
+                    case C2FieldDescriptor::INT32:  fsv = C2SupportedRange<int32_t>::Any(); break;
+                    case C2FieldDescriptor::UINT32: fsv = C2SupportedRange<uint32_t>::Any(); break;
+                    case C2FieldDescriptor::INT64:  fsv = C2SupportedRange<int64_t>::Any(); break;
+                    case C2FieldDescriptor::UINT64: fsv = C2SupportedRange<uint64_t>::Any(); break;
+                    case C2FieldDescriptor::FLOAT:  fsv = C2SupportedRange<float>::Any(); break;
+                    case C2FieldDescriptor::BLOB:   fsv = C2SupportedRange<uint8_t>::Any(); break;
+                    case C2FieldDescriptor::STRING: fsv = C2SupportedRange<char>::Any(); break;
+                default:
+                    continue; // break out of do {} while
+                }
+                fsvPointer = std::make_unique<C2FieldSupportedValues>(fsv);
+            } while (false);
+
+            mFields.emplace_hint(
+                    mFields.end(),
+                    _C2FieldId(f.offset(), f.size()),
+                    std::make_shared<FieldHelper>(
+                            mParam, _C2FieldId(f.offset(), f.size()), std::move(fsvPointer)));
+        }
+    }
+
     /**
      * Finds a field descriptor.
      */
@@ -81,35 +131,16 @@ public:
         return it->second;
     }
 
-    const ParamRef ref() const {
-        return mParam;
+    const std::vector<ParamRef> getDependenciesAsRefs() const {
+        return mDependenciesAsRefs;
     }
 
-    std::shared_ptr<C2Param> value() {
-        return mParam.get();
-    }
-
-    std::shared_ptr<const C2Param> value() const {
-        return mParam.get();
-    }
-
-    c2_status_t trySet(
-            const C2Param *value, bool mayBlock, bool *changed, Factory &f,
-            std::vector<std::unique_ptr<C2SettingResult>>* const failures) {
-        C2R result = mSetter(value, mayBlock, changed, f);
-        return result.retrieveFailures(failures);
+    std::shared_ptr<const C2ParamDescriptor> getDescriptor() const {
+        return mDescriptor;
     }
 
     const std::vector<C2Param::Index> getDownDependencies() const {
         return mDownDependencies;
-    }
-
-    void addDownDependency(C2Param::Index index) {
-        mDownDependencies.push_back(index);
-    }
-
-    const std::vector<ParamRef> getDependenciesAsRefs() const {
-        return mDependenciesAsRefs;
     }
 
     C2Param::Index index() const {
@@ -119,30 +150,20 @@ public:
         return mDefaultValue->index();
     }
 
-    Impl(Impl&&) = default;
+    C2String name() const {
+        return mName;
+    }
 
-    std::shared_ptr</* TODO const*/ C2ParamDescriptor> getDescriptor() {
-        return mDescriptor;
+    const ParamRef ref() const {
+        return mParam;
     }
 
     C2StructDescriptor retrieveStructDescriptor() {
         return std::move(_mStruct);
     }
 
-    C2InterfaceHelper::ParamHelper::attrib_t& attrib() {
-        return mAttrib;
-    }
-
     void setDefaultValue(std::shared_ptr<C2Param> default_) {
         mDefaultValue = default_;
-    }
-
-    void setSetter(std::function<C2R(const C2Param *, bool, bool *, Factory &)> setter) {
-        mSetter = setter;
-    }
-
-    void setGetter(std::function<std::shared_ptr<C2Param>(bool)> getter) {
-        mGetter = getter;
     }
 
     void setDependencies(std::vector<C2Param::Index> indices, std::vector<ParamRef> refs) {
@@ -150,7 +171,14 @@ public:
         mDependenciesAsRefs = refs;
     }
 
-    void addFields(std::vector<C2ParamFieldValues> &&fields) {
+    void setFields(std::vector<C2ParamFieldValues> &&fields) {
+        // do not allow adding fields multiple times, or to const values
+        if (!mFields.empty()) {
+            C2_LOG(FATAL) << "Trying to add fields to param " << mName << " multiple times";
+        } else if (mAttrib & attrib_t::IS_CONST) {
+            C2_LOG(FATAL) << "Trying to add fields to const param " << mName;
+        }
+
         for (C2ParamFieldValues &pfv : fields) {
             mFields.emplace_hint(
                     mFields.end(),
@@ -163,17 +191,49 @@ public:
         }
     }
 
-    /* std::shared_ptr<ParamHelper> */ void build() {
-//        fprintf(stderr, "in build\n");
-//        fprintf(stderr, "mAttrib = %u\n", mAttrib);
-//        fprintf(stderr, "mDefault = %p\n", mDefaultValue.get());
-//        fprintf(stderr, "mName = %s\n", mName.c_str());
-//        fprintf(stderr, "mDependencies = [%zu]\n", mDependencies.size());
+    void setGetter(std::function<std::shared_ptr<C2Param>(bool)> getter) {
+        mGetter = getter;
+    }
 
-        // move dependencies into descriptor
-        mDescriptor = std::make_shared<C2ParamDescriptor>(index(), (C2ParamDescriptor::attrib_t)mAttrib, std::move(mName), std::move(mDependencies));
-//        fprintf(stderr, "built descriptor %p\n", mDescriptor.get());
-        //return std::make_shared<ParamHelper>(std::move(*this));
+    void setSetter(std::function<C2R(const C2Param *, bool, bool *, Factory &)> setter) {
+        mSetter = setter;
+    }
+
+    c2_status_t trySet(
+            const C2Param *value, bool mayBlock, bool *changed, Factory &f,
+            std::vector<std::unique_ptr<C2SettingResult>>* const failures) {
+        C2R result = mSetter(value, mayBlock, changed, f);
+        return result.retrieveFailures(failures);
+    }
+
+    c2_status_t validate(const std::shared_ptr<C2ParamReflector> &reflector) {
+        if (!mSetter && mFields.empty()) {
+            C2_LOG(WARNING) << "Param " << mName << " has no setter, making it const";
+            // dependencies are empty in this case
+            mAttrib |= attrib_t::IS_CONST;
+        } else if (!mSetter) {
+            C2_LOG(FATAL) << "Param " << mName << " has no setter";
+        }
+
+        if (mAttrib & attrib_t::IS_CONST) {
+            createFieldsAndSupportedValues(reflector);
+        } else {
+            // TODO: update default based on setter and verify that FSV covers the values
+        }
+
+        if (mFields.empty()) {
+            C2_LOG(FATAL) << "Param " << mName << " has no fields";
+        }
+
+        return C2_OK;
+    }
+
+    std::shared_ptr<C2Param> value() {
+        return mParam.get();
+    }
+
+    std::shared_ptr<const C2Param> value() const {
+        return mParam.get();
     }
 
 private:
@@ -192,48 +252,84 @@ private:
     std::shared_ptr<C2ParamDescriptor> mDescriptor;
 };
 
-C2InterfaceHelper::ParamHelper::ParamHelper(ParamRef param, C2StringLiteral name, C2StructDescriptor &&strukt)
-    : mImpl(std::make_unique<C2InterfaceHelper::ParamHelper::Impl>(param, name, std::move(strukt))) { }
+C2InterfaceHelper::ParamHelper::ParamHelper(
+        ParamRef param, C2StringLiteral name, C2StructDescriptor &&strukt)
+    : mImpl(std::make_unique<C2InterfaceHelper::ParamHelper::Impl>(
+            param, name, std::move(strukt))) { }
 
 C2InterfaceHelper::ParamHelper::ParamHelper(C2InterfaceHelper::ParamHelper &&) = default;
 
 C2InterfaceHelper::ParamHelper::~ParamHelper() = default;
 
-std::shared_ptr<C2InterfaceHelper::FieldHelper>
-C2InterfaceHelper::ParamHelper::findField(size_t baseOffs, size_t baseSize) const {
-    return mImpl->findField(baseOffs, baseSize);
+void C2InterfaceHelper::ParamHelper::addDownDependency(C2Param::Index index) {
+    return mImpl->addDownDependency(index);
 }
 
 C2InterfaceHelper::ParamHelper::attrib_t& C2InterfaceHelper::ParamHelper::attrib() {
     return mImpl->attrib();
 }
 
-void C2InterfaceHelper::ParamHelper::setDefaultValue(std::shared_ptr<C2Param> default_) {
-    mImpl->setDefaultValue(default_);
+std::shared_ptr<C2InterfaceHelper::ParamHelper> C2InterfaceHelper::ParamHelper::build() {
+    mImpl->build();
+    return std::make_shared<C2InterfaceHelper::ParamHelper>(std::move(*this));
 }
 
-void C2InterfaceHelper::ParamHelper::setSetter(std::function<C2R(const C2Param *, bool, bool *, Factory &)> setter) {
-    mImpl->setSetter(setter);
+std::shared_ptr<C2InterfaceHelper::FieldHelper>
+C2InterfaceHelper::ParamHelper::findField(size_t baseOffs, size_t baseSize) const {
+    return mImpl->findField(baseOffs, baseSize);
 }
 
-void C2InterfaceHelper::ParamHelper::setGetter(std::function<std::shared_ptr<C2Param>(bool)> getter) {
-    mImpl->setGetter(getter);
+const std::vector<C2InterfaceHelper::ParamRef>
+C2InterfaceHelper::ParamHelper::getDependenciesAsRefs() const {
+    return mImpl->getDependenciesAsRefs();
 }
 
-void C2InterfaceHelper::ParamHelper::setDependencies(std::vector<C2Param::Index> indices, std::vector<ParamRef> refs) {
-    mImpl->setDependencies(indices, refs);
+std::shared_ptr<const C2ParamDescriptor>
+C2InterfaceHelper::ParamHelper::getDescriptor() const {
+    return mImpl->getDescriptor();
+}
+
+const std::vector<C2Param::Index> C2InterfaceHelper::ParamHelper::getDownDependencies() const {
+    return mImpl->getDownDependencies();
+}
+
+C2Param::Index C2InterfaceHelper::ParamHelper::index() const {
+    return mImpl->index();
+}
+
+C2String C2InterfaceHelper::ParamHelper::name() const {
+    return mImpl->name();
 }
 
 const C2InterfaceHelper::ParamRef C2InterfaceHelper::ParamHelper::ref() const {
     return mImpl->ref();
 }
 
-std::shared_ptr<C2Param> C2InterfaceHelper::ParamHelper::value() {
-    return mImpl->value();
+C2StructDescriptor C2InterfaceHelper::ParamHelper::retrieveStructDescriptor() {
+    return mImpl->retrieveStructDescriptor();
 }
 
-std::shared_ptr<const C2Param> C2InterfaceHelper::ParamHelper::value() const {
-    return mImpl->value();
+void C2InterfaceHelper::ParamHelper::setDefaultValue(std::shared_ptr<C2Param> default_) {
+    mImpl->setDefaultValue(default_);
+}
+
+void C2InterfaceHelper::ParamHelper::setDependencies(
+        std::vector<C2Param::Index> indices, std::vector<ParamRef> refs) {
+    mImpl->setDependencies(indices, refs);
+}
+
+void C2InterfaceHelper::ParamHelper::setFields(std::vector<C2ParamFieldValues> &&fields) {
+    return mImpl->setFields(std::move(fields));
+}
+
+void C2InterfaceHelper::ParamHelper::setGetter(
+        std::function<std::shared_ptr<C2Param>(bool)> getter) {
+    mImpl->setGetter(getter);
+}
+
+void C2InterfaceHelper::ParamHelper::setSetter(
+        std::function<C2R(const C2Param *, bool, bool *, Factory &)> setter) {
+    mImpl->setSetter(setter);
 }
 
 c2_status_t C2InterfaceHelper::ParamHelper::trySet(
@@ -242,38 +338,17 @@ c2_status_t C2InterfaceHelper::ParamHelper::trySet(
     return mImpl->trySet(value, mayBlock, changed, f, failures);
 }
 
-const std::vector<C2Param::Index> C2InterfaceHelper::ParamHelper::getDownDependencies() const {
-    return mImpl->getDownDependencies();
+c2_status_t C2InterfaceHelper::ParamHelper::validate(
+        const std::shared_ptr<C2ParamReflector> &reflector) {
+    return mImpl->validate(reflector);
 }
 
-void C2InterfaceHelper::ParamHelper::addDownDependency(C2Param::Index index) {
-    return mImpl->addDownDependency(index);
+std::shared_ptr<C2Param> C2InterfaceHelper::ParamHelper::value() {
+    return mImpl->value();
 }
 
-const std::vector<C2InterfaceHelper::ParamRef>
-C2InterfaceHelper::ParamHelper::getDependenciesAsRefs() const {
-    return mImpl->getDependenciesAsRefs();
-}
-
-C2StructDescriptor C2InterfaceHelper::ParamHelper::retrieveStructDescriptor() {
-    return mImpl->retrieveStructDescriptor();
-}
-
-C2Param::Index C2InterfaceHelper::ParamHelper::index() const {
-    return mImpl->index();
-}
-
-std::shared_ptr</* TODO const*/ C2ParamDescriptor> C2InterfaceHelper::ParamHelper::getDescriptor() {
-    return mImpl->getDescriptor();
-}
-
-void C2InterfaceHelper::ParamHelper::addFields(std::vector<C2ParamFieldValues> &&fields) {
-    return mImpl->addFields(std::move(fields));
-}
-
-std::shared_ptr<C2InterfaceHelper::ParamHelper> C2InterfaceHelper::ParamHelper::build() {
-    mImpl->build();
-    return std::make_shared<C2InterfaceHelper::ParamHelper>(std::move(*this));
+std::shared_ptr<const C2Param> C2InterfaceHelper::ParamHelper::value() const {
+    return mImpl->value();
 }
 
 /* ---------------------------- FieldHelper ---------------------------- */
@@ -313,7 +388,8 @@ const C2FieldSupportedValues *C2InterfaceHelper::FieldHelper::getPossibleValues(
  */
 template<typename T>
 struct SupportedValuesBuilder : C2ParamFieldValuesBuilder<T> {
-    SupportedValuesBuilder(C2ParamField &field, std::shared_ptr<C2InterfaceHelper::FieldHelper> helper)
+    SupportedValuesBuilder(
+            C2ParamField &field, std::shared_ptr<C2InterfaceHelper::FieldHelper> helper)
         : C2ParamFieldValuesBuilder<T>(field), _mHelper(helper), _mField(field) {
     }
 
@@ -362,8 +438,88 @@ template struct C2InterfaceHelper::Field<uint64_t>;
 //template struct C2InterfaceHelper::Field<c2_cntr64_t>;
 template struct C2InterfaceHelper::Field<float>;
 
+/* --------------------------------- Factory --------------------------------- */
+
+struct C2InterfaceHelper::FactoryImpl : public C2InterfaceHelper::Factory {
+    virtual std::shared_ptr<C2ParamReflector> getReflector() const override {
+        return _mReflector;
+    }
+
+    virtual std::shared_ptr<ParamHelper>
+    getParamHelper(const ParamRef &param) const override {
+        return _mParams.find(param)->second;
+    }
+
+public:
+    FactoryImpl(std::shared_ptr<C2ParamReflector> reflector)
+        : _mReflector(reflector) { }
+
+    virtual ~FactoryImpl() = default;
+
+    void addParam(std::shared_ptr<ParamHelper> param) {
+        _mParams.insert({ param->ref(), param });
+        _mIndexToHelper.insert({param->index(), param});
+
+        // add down-dependencies (and validate dependencies as a result)
+        size_t ix = 0;
+        for (const ParamRef &ref : param->getDependenciesAsRefs()) {
+            // dependencies must already be defined
+            if (!_mParams.count(ref)) {
+                C2_LOG(FATAL) << "Parameter " << param->name() << " has a dependency at index "
+                        << ix << " that is not yet defined";
+            }
+            _mParams.find(ref)->second->addDownDependency(param->index());
+            ++ix;
+        }
+
+        _mDependencyIndex.emplace(param->index(), _mDependencyIndex.size());
+    }
+
+    std::shared_ptr<ParamHelper> getParam(C2Param::Index ix) const {
+        // TODO: handle streams separately
+        const auto it = _mIndexToHelper.find(ix);
+        if (it == _mIndexToHelper.end()) {
+            return nullptr;
+        }
+        return it->second;
+    }
+
+    /**
+     * TODO: this could return a copy using proper pointer cast.
+     */
+    std::shared_ptr<C2Param> getParamValue(C2Param::Index ix) const {
+        std::shared_ptr<ParamHelper> helper = getParam(ix);
+        return helper ? helper->value() : nullptr;
+    }
+
+    c2_status_t querySupportedParams(
+            std::vector<std::shared_ptr<C2ParamDescriptor>> *const params) const {
+        for (const auto &it : _mParams) {
+            // TODO: change querySupportedParams signature?
+            params->push_back(
+                    std::const_pointer_cast<C2ParamDescriptor>(it.second->getDescriptor()));
+        }
+        // TODO: handle errors
+        return C2_OK;
+    }
+
+    size_t getDependencyIndex(C2Param::Index ix) {
+        // in this version of the helper there is only a single stream so
+        // we can look up directly by index
+        auto it = _mDependencyIndex.find(ix);
+        return it == _mDependencyIndex.end() ? SIZE_MAX : it->second;
+    }
+
+private:
+    std::map<ParamRef, std::shared_ptr<ParamHelper>> _mParams;
+    std::map<C2Param::Index, std::shared_ptr<ParamHelper>> _mIndexToHelper;
+    std::shared_ptr<C2ParamReflector> _mReflector;
+    std::map<C2Param::Index, size_t> _mDependencyIndex;
+};
 
 /* --------------------------------- Helper --------------------------------- */
+
+namespace {
 
 static std::string asString(C2Param *p) {
     char addr[20];
@@ -376,6 +532,13 @@ static std::string asString(C2Param *p) {
     }
     return v + "]";
 }
+
+}
+
+C2InterfaceHelper::C2InterfaceHelper(std::shared_ptr<C2ReflectorHelper> reflector)
+    : mReflector(reflector),
+      _mFactory(std::make_shared<FactoryImpl>(reflector)) { }
+
 
 size_t C2InterfaceHelper::GetBaseOffset(const std::shared_ptr<C2ParamReflector> &reflector,
         C2Param::CoreIndex index, size_t offset) {
@@ -409,56 +572,17 @@ size_t C2InterfaceHelper::GetBaseOffset(const std::shared_ptr<C2ParamReflector> 
     return ~(size_t)0; // not found
 }
 
-c2_status_t C2InterfaceHelper::query(
-        const std::vector<C2Param*> &stackParams,
-        const std::vector<C2Param::Index> &heapParamIndices,
-        c2_blocking_t mayBlock __unused /* TODO */,
-        std::vector<std::unique_ptr<C2Param>>* const heapParams) const {
-    bool paramWasInvalid = false;
-    bool paramNotFound = false;
-    bool paramDidNotFit = false;
-    bool paramNoMemory = false;
-
-    for (C2Param* const p : stackParams) {
-        if (!*p) {
-            paramWasInvalid = true;
-            p->invalidate();
-        } else {
-            std::shared_ptr<C2Param> value = _mFactory.getParamValue(p->index());
-            if (!value) {
-                paramNotFound = true;
-                p->invalidate();
-            } else if (!p->updateFrom(*value)) {
-                paramDidNotFit = true;
-                p->invalidate();
-            }
-        }
+void C2InterfaceHelper::addParameter(std::shared_ptr<ParamHelper> param) {
+    mReflector->addStructDescriptor(param->retrieveStructDescriptor());
+    c2_status_t err = param->validate(mReflector);
+    if (err != C2_CORRUPTED) {
+        _mFactory->addParam(param);
     }
-
-    for (const C2Param::Index ix : heapParamIndices) {
-        std::shared_ptr<C2Param> value = _mFactory.getParamValue(ix);
-        if (value) {
-            std::unique_ptr<C2Param> p = C2Param::Copy(*value);
-            if (p != nullptr) {
-                heapParams->push_back(std::move(p));
-            } else {
-                paramNoMemory = true;
-            }
-        } else {
-            paramNotFound = true;
-        }
-    }
-
-    return paramNoMemory ? C2_NO_MEMORY :
-           paramNotFound ? C2_BAD_INDEX :
-           // the following errors are not marked in the return value
-           paramDidNotFit ? C2_OK :
-           paramWasInvalid ? C2_OK : C2_OK;
 }
 
 c2_status_t C2InterfaceHelper::config(
        const std::vector<C2Param*> &params, c2_blocking_t mayBlock,
-       std::vector<std::unique_ptr<C2SettingResult>>* const failures,
+       std::vector<std::unique_ptr<C2SettingResult>>* const failures, bool updateParams,
        std::vector<std::shared_ptr<C2Param>> *changes __unused /* TODO */) {
     bool paramWasInvalid = false; // TODO is this the same as bad value?
     bool paramNotFound = false;
@@ -524,7 +648,7 @@ c2_status_t C2InterfaceHelper::config(
             bool dirty = min->second.second;
             dependencies.erase(min);
 
-            std::shared_ptr<ParamHelper> param = _mFactory.getParam(ix);
+            std::shared_ptr<ParamHelper> param = _mFactory->getParam(ix);
             C2_LOG(VERBOSE) << "old value " << asString(param->value().get());
             if (!last) {
                 C2_LOG(VERBOSE) << "new value " << asString(p);
@@ -540,8 +664,9 @@ c2_status_t C2InterfaceHelper::config(
             bool changed = false;
             C2_LOG(VERBOSE) << "setting param " << ix;
             std::shared_ptr<C2Param> oldValue = param->value();
-            c2_status_t res = param->trySet((!last && paramIx == ix) ? p : param->value().get(), mayBlock,
-                      &changed, _mFactory, failures);
+            c2_status_t res = param->trySet(
+                    (!last && paramIx == ix) ? p : param->value().get(), mayBlock,
+                    &changed, *_mFactory, failures);
             std::shared_ptr<C2Param> newValue = param->value();
             C2_CHECK_EQ(oldValue == newValue, *oldValue == *newValue);
             switch (res) {
@@ -554,13 +679,21 @@ c2_status_t C2InterfaceHelper::config(
                 default: ;// TODO fatal
             }
 
+            // copy back result for configured values (or invalidate if it does not fit or match)
+            if (updateParams && !last && paramIx == ix) {
+                if (!p->updateFrom(*param->value())) {
+                    p->invalidate();
+                }
+            }
+
             // compare ptrs as params are copy on write
             if (changed) {
                 C2_LOG(VERBOSE) << "param " << ix << " value changed";
                 // value changed update down-dependencies and mark them dirty
                 for (const C2Param::Index ix : param->getDownDependencies()) {
                     C2_LOG(VERBOSE) << 1;
-                    auto insert_res = dependencies.insert({ getDependencyIndex(ix), { ix, true /* dirty */ }});
+                    auto insert_res = dependencies.insert(
+                            { getDependencyIndex(ix), { ix, true /* dirty */ }});
                     if (!insert_res.second) {
                         (*insert_res.first).second.second = true; // mark dirty
                     }
@@ -582,21 +715,81 @@ c2_status_t C2InterfaceHelper::config(
             paramNotFound ? C2_BAD_INDEX : C2_OK);
 }
 
+size_t C2InterfaceHelper::getDependencyIndex(C2Param::Index ix) const {
+    return _mFactory->getDependencyIndex(ix);
+}
+
+c2_status_t C2InterfaceHelper::query(
+        const std::vector<C2Param*> &stackParams,
+        const std::vector<C2Param::Index> &heapParamIndices,
+        c2_blocking_t mayBlock __unused /* TODO */,
+        std::vector<std::unique_ptr<C2Param>>* const heapParams) const {
+    bool paramWasInvalid = false;
+    bool paramNotFound = false;
+    bool paramDidNotFit = false;
+    bool paramNoMemory = false;
+
+    for (C2Param* const p : stackParams) {
+        if (!*p) {
+            paramWasInvalid = true;
+            p->invalidate();
+        } else {
+            std::shared_ptr<C2Param> value = _mFactory->getParamValue(p->index());
+            if (!value) {
+                paramNotFound = true;
+                p->invalidate();
+            } else if (!p->updateFrom(*value)) {
+                paramDidNotFit = true;
+                p->invalidate();
+            }
+        }
+    }
+
+    for (const C2Param::Index ix : heapParamIndices) {
+        std::shared_ptr<C2Param> value = _mFactory->getParamValue(ix);
+        if (value) {
+            std::unique_ptr<C2Param> p = C2Param::Copy(*value);
+            if (p != nullptr) {
+                heapParams->push_back(std::move(p));
+            } else {
+                paramNoMemory = true;
+            }
+        } else {
+            paramNotFound = true;
+        }
+    }
+
+    return paramNoMemory ? C2_NO_MEMORY :
+           paramNotFound ? C2_BAD_INDEX :
+           // the following errors are not marked in the return value
+           paramDidNotFit ? C2_OK :
+           paramWasInvalid ? C2_OK : C2_OK;
+}
+
+c2_status_t C2InterfaceHelper::querySupportedParams(
+        std::vector<std::shared_ptr<C2ParamDescriptor>> *const params) const {
+    return _mFactory->querySupportedParams(params);
+}
+
+
 c2_status_t C2InterfaceHelper::querySupportedValues(
         std::vector<C2FieldSupportedValuesQuery> &fields, c2_blocking_t mayBlock __unused) const {
     for (C2FieldSupportedValuesQuery &query : fields) {
         C2_LOG(VERBOSE) << "querying field " << query.field();
         C2Param::Index ix = _C2ParamInspector::GetIndex(query.field());
-        std::shared_ptr<ParamHelper> param = _mFactory.getParam(ix);
+        std::shared_ptr<ParamHelper> param = _mFactory->getParam(ix);
         if (!param) {
             C2_LOG(VERBOSE) << "bad param";
             query.status = C2_BAD_INDEX;
             continue;
         }
-        size_t offs = GetBaseOffset(mReflector, ix, _C2ParamInspector::GetOffset(query.field()) - sizeof(C2Param)) + sizeof(C2Param);
+        size_t offs = GetBaseOffset(
+                mReflector, ix,
+                _C2ParamInspector::GetOffset(query.field()) - sizeof(C2Param)) + sizeof(C2Param);
         C2_LOG(VERBOSE) << "field resolved to "
                 << StringPrintf("@%02zx+%02x", offs, _C2ParamInspector::GetSize(query.field()));
-        std::shared_ptr<FieldHelper> field = param->findField(offs, _C2ParamInspector::GetSize(query.field()));
+        std::shared_ptr<FieldHelper> field =
+            param->findField(offs, _C2ParamInspector::GetSize(query.field()));
         if (!field) {
             C2_LOG(VERBOSE) << "bad field";
             query.status = C2_NOT_FOUND;
@@ -625,4 +818,3 @@ c2_status_t C2InterfaceHelper::querySupportedValues(
     }
     return C2_OK;
 }
-

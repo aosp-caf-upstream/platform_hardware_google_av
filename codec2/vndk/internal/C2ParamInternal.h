@@ -24,6 +24,16 @@ struct C2_HIDE _C2ParamInspector {
         return fd._mFieldId._mOffset;
     }
 
+    inline static void SetOffset(C2FieldDescriptor &fd, uint32_t offset) {
+        fd._mFieldId._mOffset = offset;
+    }
+
+    inline static uint32_t GetEndOffset(const C2FieldDescriptor &fd, uint32_t paramSize = 0) {
+        uint32_t endOffset = fd._mFieldId._mOffset + fd._mExtent * fd._mFieldId._mSize;
+        /// for flex parameters return paramSize if given
+        return fd._mExtent ? endOffset : std::max(endOffset, paramSize);
+    }
+
     inline static uint32_t GetSize(const C2FieldDescriptor &fd) {
         return fd._mFieldId._mSize;
     }
@@ -79,6 +89,11 @@ struct C2_HIDE _C2ParamInspector {
     C2StructDescriptor CreateStructDescriptor(C2Param::CoreIndex index,
                                         std::vector<C2FieldDescriptor> &&fields) {
         return C2StructDescriptor(index, std::move(fields));
+    }
+
+    inline static
+    C2FieldDescriptor OffsetFieldDescriptor(const C2FieldDescriptor &fd, size_t offset) {
+        return C2FieldDescriptor(fd, offset);
     }
 
     // expose attributes

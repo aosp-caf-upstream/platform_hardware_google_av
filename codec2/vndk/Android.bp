@@ -19,6 +19,7 @@ cc_library_shared {
         "C2Buffer.cpp",
         "C2Config.cpp",
         "C2Store.cpp",
+        "platform/C2BqBuffer.cpp",
         "util/C2Debug.cpp",
         "util/C2InterfaceHelper.cpp",
         "util/C2InterfaceUtils.cpp",
@@ -44,6 +45,7 @@ cc_library_shared {
 
     shared_libs: [
         "android.hardware.graphics.allocator@2.0",
+        "android.hardware.graphics.bufferqueue@1.0",
         "android.hardware.graphics.mapper@2.0",
         "android.hardware.media.bufferpool@1.0",
         "libbase",
@@ -55,6 +57,7 @@ cc_library_shared {
         "libion",
         "libfmq",
         "liblog",
+        "libstagefright_bufferqueue_helper",
         "libstagefright_foundation",
         "libstagefright_bufferpool@1.0",
         "libui",

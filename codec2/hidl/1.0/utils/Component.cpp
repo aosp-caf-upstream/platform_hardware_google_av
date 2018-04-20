@@ -210,8 +210,10 @@ Return<Status> Component::drain(bool withEos) {
 }
 
 Return<Status> Component::setOutputSurface(
+        uint64_t blockPoolId,
         const sp<HGraphicBufferProducer>& surface) {
     // TODO implement
+    (void)blockPoolId;
     (void)surface;
     return Status::OMITTED;
 }

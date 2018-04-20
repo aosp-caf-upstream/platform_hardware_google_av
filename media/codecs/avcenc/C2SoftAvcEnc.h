@@ -117,7 +117,9 @@ namespace android {
 #define ive_aligned_free(buf) free(buf)
 
 struct C2SoftAvcEnc : public SimpleC2Component {
-    C2SoftAvcEnc(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftAvcEnc(const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl);
 
     // From SimpleC2Component
     c2_status_t onInit() override;
@@ -147,6 +149,8 @@ private:
         int64_t mTimeUs;
         int32_t mFlags;
     } InputBufferInfo;
+
+    std::shared_ptr<IntfImpl> mIntf;
 
     int32_t mStride;
 

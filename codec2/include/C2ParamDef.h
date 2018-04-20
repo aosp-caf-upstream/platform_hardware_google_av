@@ -844,6 +844,9 @@ private:
  *           C2MyIntegerPortParamTuning;
  *
  * They contain a single member (value or values) that is described as "value" or "values".
+ *
+ * These structures don't define a core index, and as such, they cannot be used in structure
+ * declarations. Use type[] instead, such as int32_t field[].
  */
 /// A 32-bit signed integer parameter in value, described as "value"
 typedef C2SimpleValueStruct<int32_t> C2Int32Value;

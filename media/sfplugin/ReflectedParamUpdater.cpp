@@ -119,11 +119,6 @@ void ReflectedParamUpdater::updateParamsFromMessage(
         std::vector<std::unique_ptr<C2Param>> *vec /* nonnull */) const {
     CHECK(vec != nullptr);
 
-    class MyParam : public C2Param {
-    public:
-        inline MyParam(uint32_t size, Index index) : C2Param(size, index) {}
-    };
-
     std::map<C2Param::Index, C2Param *> paramsMap;
     for (const std::unique_ptr<C2Param> &param : *vec) {
         paramsMap[param->index()] = param.get();

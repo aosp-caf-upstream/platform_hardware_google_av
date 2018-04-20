@@ -26,6 +26,8 @@
 #include <C2PlatformSupport.h>
 #include <C2AllocatorGralloc.h>
 
+#include <C2Debug.h>
+#include <C2Config.h>
 #include <C2Component.h>
 #include <C2Work.h>
 #include <C2Buffer.h>
@@ -77,17 +79,45 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
         }
         status_t err = source->initCheck();
         if (err != OK) {
-            ALOGE("Impl::init: GBS init failed: %d", err);
+            ALOGE("Impl::init -- GBS init failed: %d", err);
             return false;
         }
+
+        // Query necessary information for GraphicBufferSource::configure() from
+        // the component interface.
+        std::shared_ptr<C2Component> comp = mComp.lock();
+        if (!comp) {
+            ALOGE("Impl::init -- component died.");
+            return false;
+        }
+        std::shared_ptr<C2ComponentInterface> intf = comp->intf();
+        if (!intf) {
+            ALOGE("Impl::init -- null component interface.");
+            return false;
+        }
+
+        // TODO: read settings properly from the interface
+        C2VideoSizeStreamTuning::input inputSize;
+        c2_status_t c2Status = intf->query_vb(
+                { &inputSize },
+                {},
+                C2_MAY_BLOCK,
+                nullptr);
+        if (c2Status != C2_OK) {
+            ALOGD("Impl::init -- cannot query information from "
+                    "the component interface: %s.", asString(c2Status));
+            return false;
+        }
+
         // TODO: proper color aspect & dataspace
         android_dataspace dataSpace = HAL_DATASPACE_BT709;
-        // TODO: read settings properly from the interface
+
         err = source->configure(
-                this, dataSpace, kBufferCount, 1080, 1920,
+                this, dataSpace, kBufferCount,
+                inputSize.width, inputSize.height,
                 GRALLOC_USAGE_SW_READ_OFTEN);
         if (err != OK) {
-            ALOGE("Impl::init: GBS configure failed: %d", err);
+            ALOGE("Impl::init -- GBS configure failed: %d", err);
             return false;
         }
         for (int32_t i = 0; i < kBufferCount; ++i) {
@@ -97,7 +127,7 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
             }
         }
         if (!source->start().isOk()) {
-            ALOGE("Impl::init: GBS start failed");
+            ALOGE("Impl::init -- GBS start failed");
             return false;
         }
         mAllocatorMutex.lock();
@@ -106,7 +136,7 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
                 &mAllocator);
         mAllocatorMutex.unlock();
         if (c2err != OK) {
-            ALOGE("Impl::init: failed to fetch gralloc allocator: %d", c2err);
+            ALOGE("Impl::init -- failed to fetch gralloc allocator: %d", c2err);
             return false;
         }
         return true;
@@ -118,12 +148,13 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
             const sp<GraphicBuffer>& buffer,
             int64_t timestamp,
             int fenceFd) override {
-        ALOGV("Impl::submitBuffer bufferId = %d", bufferId);
+        ALOGV("Impl::submitBuffer -- bufferId = %d", bufferId);
         // TODO: Use fd to construct fence
         (void)fenceFd;
 
         std::shared_ptr<C2Component> comp = mComp.lock();
         if (!comp) {
+            ALOGW("Impl::submitBuffer -- component died.");
             return NO_INIT;
         }
 
@@ -178,6 +209,7 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
     virtual status_t submitEos(int32_t /* bufferId */) override {
         std::shared_ptr<C2Component> comp = mComp.lock();
         if (!comp) {
+            ALOGW("Impl::submitEos -- component died.");
             return NO_INIT;
         }
 

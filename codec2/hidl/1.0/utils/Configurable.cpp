@@ -75,8 +75,10 @@ Return<void> CachedConfigurable::config(
         const hidl_vec<uint8_t>& inParams,
         bool mayBlock,
         config_cb _hidl_cb) {
+    // inParams is not writable, so create a copy as config modifies the parameters
+    hidl_vec<uint8_t> inParamsCopy = inParams;
     std::vector<C2Param*> c2params;
-    if (parseParamsBlob(&c2params, inParams) != C2_OK) {
+    if (parseParamsBlob(&c2params, inParamsCopy) != C2_OK) {
         _hidl_cb(Status::CORRUPTED,
                 hidl_vec<SettingResult>(),
                 hidl_vec<uint8_t>());

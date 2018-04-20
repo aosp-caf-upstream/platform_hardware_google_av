@@ -58,7 +58,8 @@ static std::shared_ptr<C2ComponentInterface> BuildIntf(
 C2SoftMpeg4Dec::C2SoftMpeg4Dec(const char *name, c2_node_id_t id)
     : SimpleC2Component(BuildIntf(name, id)),
       mDecHandle(nullptr),
-      mOutputBuffer{} {
+      mOutputBuffer{},
+      mInitialized(false) {
 }
 
 C2SoftMpeg4Dec::~C2SoftMpeg4Dec() {
@@ -72,7 +73,9 @@ c2_status_t C2SoftMpeg4Dec::onInit() {
 
 c2_status_t C2SoftMpeg4Dec::onStop() {
     if (mInitialized) {
-        PVCleanUpVideoDecoder(mDecHandle);
+        if (mDecHandle) {
+            PVCleanUpVideoDecoder(mDecHandle);
+        }
         mInitialized = false;
     }
     for (int32_t i = 0; i < kNumOutputBuffers; ++i) {
@@ -90,12 +93,17 @@ c2_status_t C2SoftMpeg4Dec::onStop() {
 }
 
 void C2SoftMpeg4Dec::onReset() {
-    (void) onStop();
+    (void)onStop();
+    (void)onInit();
 }
 
 void C2SoftMpeg4Dec::onRelease() {
     if (mInitialized) {
-        PVCleanUpVideoDecoder(mDecHandle);
+        if (mDecHandle) {
+            PVCleanUpVideoDecoder(mDecHandle);
+            delete mDecHandle;
+            mDecHandle = nullptr;
+        }
         mInitialized = false;
     }
     if (mOutBlock) {
@@ -107,14 +115,13 @@ void C2SoftMpeg4Dec::onRelease() {
             mOutputBuffer[i] = nullptr;
         }
     }
-
-    delete mDecHandle;
-    mDecHandle = nullptr;
 }
 
 c2_status_t C2SoftMpeg4Dec::onFlush_sm() {
     if (mInitialized) {
-        if (PV_TRUE != PVResetVideoDecoder(mDecHandle)) return C2_CORRUPTED;
+        if (PV_TRUE != PVResetVideoDecoder(mDecHandle)) {
+            return C2_CORRUPTED;
+        }
     }
     mSignalledOutputEos = false;
     mSignalledError = false;
@@ -195,7 +202,9 @@ c2_status_t C2SoftMpeg4Dec::ensureDecoderState(const std::shared_ptr<C2BlockPool
     for (int32_t i = 0; i < kNumOutputBuffers; ++i) {
         if (!mOutputBuffer[i]) {
             mOutputBuffer[i] = (uint8_t *)malloc(outSize * sizeof(uint8_t));
-            if (!mOutputBuffer[i]) return C2_NO_MEMORY;
+            if (!mOutputBuffer[i]) {
+                return C2_NO_MEMORY;
+            }
         }
     }
     if (mOutBlock &&
@@ -362,7 +371,7 @@ void C2SoftMpeg4Dec::process(
         }
 
         PVSetPostProcType(mDecHandle, 0);
-        (void) handleResChange(work);
+        (void)handleResChange(work);
         if (codecConfig) {
             fillEmptyWork(work);
             return;
@@ -455,7 +464,7 @@ void C2SoftMpeg4Dec::process(
 c2_status_t C2SoftMpeg4Dec::drain(
         uint32_t drainMode,
         const std::shared_ptr<C2BlockPool> &pool) {
-    (void) pool;
+    (void)pool;
     if (drainMode == NO_DRAIN) {
         ALOGW("drain with NO_DRAIN: no-op");
         return C2_OK;

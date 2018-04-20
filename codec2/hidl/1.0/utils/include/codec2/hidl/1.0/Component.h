@@ -76,6 +76,7 @@ struct Component : public Configurable<IComponent> {
     virtual Return<void> flush(flush_cb _hidl_cb) override;
     virtual Return<Status> drain(bool withEos) override;
     virtual Return<Status> setOutputSurface(
+            uint64_t blockPoolId,
             const sp<HGraphicBufferProducer>& surface) override;
     virtual Return<Status> connectToInputSurface(
             const sp<IInputSurface>& surface) override;
