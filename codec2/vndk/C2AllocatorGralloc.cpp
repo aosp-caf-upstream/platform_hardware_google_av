@@ -209,7 +209,8 @@ public:
     static const C2HandleGralloc* Import(
             const C2Handle *const handle,
             uint32_t *width, uint32_t *height, uint32_t *format,
-            uint64_t *usage, uint32_t *stride) {
+            uint64_t *usage, uint32_t *stride,
+            uint64_t *igbp_id, uint32_t *igbp_slot) {
         const ExtraData *xd = getExtraData(handle);
         if (xd == nullptr) {
             return nullptr;
@@ -219,6 +220,8 @@ public:
         *format = xd->format;
         *usage = xd->usage_lo | (uint64_t(xd->usage_hi) << 32);
         *stride = xd->stride;
+        *igbp_id = xd->igbp_id_lo | (uint64_t(xd->igbp_id_hi) << 32);
+        *igbp_slot = xd->igbp_slot;
         return reinterpret_cast<const C2HandleGralloc *>(handle);
     }
 };
@@ -562,8 +565,9 @@ private:
 
 void _UnwrapNativeCodec2GrallocMetadata(
         const C2Handle *const handle,
-        uint32_t *width, uint32_t *height, uint32_t *format, uint64_t *usage, uint32_t *stride) {
-    (void)C2HandleGralloc::Import(handle, width, height, format, usage, stride);
+        uint32_t *width, uint32_t *height, uint32_t *format,uint64_t *usage, uint32_t *stride,
+        uint64_t *igbp_id, uint32_t *igbp_slot) {
+    (void)C2HandleGralloc::Import(handle, width, height, format, usage, stride, igbp_id, igbp_slot);
 }
 
 C2AllocatorGralloc::Impl::Impl(id_t id) : mInit(C2_OK) {
@@ -647,10 +651,13 @@ c2_status_t C2AllocatorGralloc::Impl::priorGraphicAllocation(
         std::shared_ptr<C2GraphicAllocation> *allocation) {
     BufferDescriptorInfo info;
     info.mapperInfo.layerCount = 1u;
+    uint64_t igbp_id;
+    uint32_t igbp_slot;
     const C2HandleGralloc *grallocHandle = C2HandleGralloc::Import(
             handle,
             &info.mapperInfo.width, &info.mapperInfo.height,
-            (uint32_t *)&info.mapperInfo.format, (uint64_t *)&info.mapperInfo.usage, &info.stride);
+            (uint32_t *)&info.mapperInfo.format, (uint64_t *)&info.mapperInfo.usage, &info.stride,
+            &igbp_id, &igbp_slot);
     if (grallocHandle == nullptr) {
         return C2_BAD_VALUE;
     }

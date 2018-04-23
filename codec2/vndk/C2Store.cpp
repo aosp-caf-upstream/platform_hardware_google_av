@@ -130,9 +130,10 @@ public:
     _C2BlockPoolCache() : mBlockPoolSeqId(C2BlockPool::PLATFORM_START + 1) {}
 
     c2_status_t _createBlockPool(
-            C2PlatformAllocatorStore::id_t allocatorId, C2BlockPool::local_id_t poolId,
+            C2PlatformAllocatorStore::id_t allocatorId,
+            std::shared_ptr<const C2Component> component,
+            C2BlockPool::local_id_t poolId,
             std::shared_ptr<C2BlockPool> *pool) {
-
         std::shared_ptr<C2AllocatorStore> allocatorStore =
                 GetCodec2PlatformAllocatorStore();
         std::shared_ptr<C2Allocator> allocator;
@@ -148,6 +149,7 @@ public:
                                     allocator, poolId);
                     *pool = ptr;
                     mIonBlockPools[poolId] = ptr;
+                    mComponents[poolId] = component;
                 }
                 break;
             case C2PlatformAllocatorStore::GRALLOC:
@@ -159,6 +161,7 @@ public:
                                     allocator, poolId);
                     *pool = ptr;
                     mBqBlockPools[poolId] = ptr;
+                    mComponents[poolId] = component;
                 }
                 break;
             default:
@@ -168,50 +171,76 @@ public:
     }
 
     c2_status_t createBlockPool(
-            C2PlatformAllocatorStore::id_t allocatorId, std::shared_ptr<C2BlockPool> *pool) {
-        return _createBlockPool(allocatorId, mBlockPoolSeqId++, pool);
+            C2PlatformAllocatorStore::id_t allocatorId,
+            std::shared_ptr<const C2Component> component,
+            std::shared_ptr<C2BlockPool> *pool) {
+        return _createBlockPool(allocatorId, component, mBlockPoolSeqId++, pool);
     }
 
-
-    bool getBlockPool(C2BlockPool::local_id_t blockPoolId, std::shared_ptr<C2BlockPool> *pool) {
+    bool getBlockPool(
+            C2BlockPool::local_id_t blockPoolId,
+            std::shared_ptr<const C2Component> component,
+            std::shared_ptr<C2BlockPool> *pool) {
         // TODO: use one iterator for mulitple blockpool type scalability.
+        std::shared_ptr<C2BlockPool> ptr;
         auto ionIt = mIonBlockPools.find(blockPoolId);
         if (ionIt != mIonBlockPools.end()) {
-            *pool = ionIt->second.lock();
-            if (*pool) {
-                return true;
+            ptr = ionIt->second.lock();
+            if (!ptr) {
+                mIonBlockPools.erase(ionIt);
+                mComponents.erase(blockPoolId);
+            } else {
+                auto found = mComponents.find(blockPoolId);
+                if (component == found->second.lock()) {
+                    *pool = ptr;
+                    return true;
+                }
             }
-            mIonBlockPools.erase(ionIt);
         }
         auto bqIt = mBqBlockPools.find(blockPoolId);
         if (bqIt != mBqBlockPools.end()) {
-            *pool = bqIt->second.lock();
-            if (*pool) {
-                return true;
+            ptr = bqIt->second.lock();
+            if (!ptr) {
+                mBqBlockPools.erase(bqIt);
+                mComponents.erase(blockPoolId);
+            } else {
+                auto found = mComponents.find(blockPoolId);
+                if (component == found->second.lock()) {
+                    *pool = ptr;
+                    return true;
+                }
             }
-            mBqBlockPools.erase(bqIt);
         }
         return false;
     }
 
-    bool setBufferQueue(C2BlockPool::local_id_t blockPoolId, const sp<HIGBP> &producer) {
+    bool setBufferQueue(
+            C2BlockPool::local_id_t blockPoolId,
+            std::shared_ptr<const C2Component> component,
+            const sp<HGraphicBufferProducer> &producer) {
         auto bqIt = mBqBlockPools.find(blockPoolId);
         if (bqIt != mBqBlockPools.end()) {
             std::shared_ptr<C2BufferQueueBlockPool> pool = bqIt->second.lock();
-            if (pool) {
-                pool->configureProducer(producer);
-                return true;
+            if (!pool) {
+                mBqBlockPools.erase(bqIt);
+                mComponents.erase(blockPoolId);
+            } else {
+                auto found = mComponents.find(blockPoolId);
+                if (component == found->second.lock()) {
+                    pool->configureProducer(producer);
+                    return true;
+                }
             }
-            mBqBlockPools.erase(bqIt);
         }
         return false;
     }
 
 private:
-    // TODO: support C2Component as key.
     C2BlockPool::local_id_t mBlockPoolSeqId;
     std::map<C2BlockPool::local_id_t, std::weak_ptr<C2PooledBlockPool>> mIonBlockPools;
     std::map<C2BlockPool::local_id_t, std::weak_ptr<C2BufferQueueBlockPool>> mBqBlockPools;
+
+    std::map<C2BlockPool::local_id_t, std::weak_ptr<const C2Component>> mComponents;
 };
 
 static std::unique_ptr<_C2BlockPoolCache> sBlockPoolCache =
@@ -233,7 +262,7 @@ c2_status_t GetCodec2BlockPool(
     c2_status_t res = C2_NOT_FOUND;
 
     if (id >= C2BlockPool::PLATFORM_START) {
-        if (sBlockPoolCache->getBlockPool(id, pool)) {
+        if (sBlockPoolCache->getBlockPool(id, component, pool)) {
             return C2_OK;
         }
     }
@@ -253,7 +282,8 @@ c2_status_t GetCodec2BlockPool(
         break;
     // TODO: remove this. this is temporary
     case C2BlockPool::PLATFORM_START:
-        res = sBlockPoolCache->_createBlockPool(C2PlatformAllocatorStore::GRALLOC, id, pool);
+        res = sBlockPoolCache->_createBlockPool(
+                C2PlatformAllocatorStore::GRALLOC, component, id, pool);
         break;
     default:
         break;
@@ -271,7 +301,7 @@ c2_status_t CreateCodec2BlockPool(
     }
 
     std::lock_guard<std::mutex> lock(sBlockPoolCacheMutex);
-    return sBlockPoolCache->createBlockPool(allocatorId, pool);
+    return sBlockPoolCache->createBlockPool(allocatorId, component, pool);
 }
 
 class C2PlatformComponentStore : public C2ComponentStore {

@@ -53,6 +53,7 @@ private:
         status_t status;
         PixelFormat pixelFormat = static_cast<PixelFormat>(format);
         int slot;
+        ALOGV("tries to dequeue buffer");
         mProducer->dequeueBuffer(
                 width, height, pixelFormat, androidUsage.asGrallocUsage(), true,
                 [&status, &slot, &fence](
@@ -76,6 +77,7 @@ private:
               return C2_BAD_VALUE;
             }
         }
+        ALOGV("dequeued a buffer successfully");
         native_handle_t* nh = nullptr;
         hidl_handle fenceHandle;
         if (fence) {
@@ -119,6 +121,7 @@ private:
             native_handle_t *grallocHandle = native_handle_clone(mBuffers[slot]->handle);
 
             if (grallocHandle) {
+                ALOGV("buffer wraps %llu %d", (unsigned long long)mProducerId, slot);
                 C2Handle *c2Handle = android::WrapNativeCodec2GrallocHandle(
                         grallocHandle,
                         mBuffers[slot]->width,
@@ -178,6 +181,7 @@ public:
                     return err;
                 }
                 *block = _C2BlockFactory::CreateGraphicBlock(alloc);
+                ALOGV("allocated a buffer successfully");
 
                 return C2_OK;
             }
@@ -192,7 +196,7 @@ public:
         return C2_TIMED_OUT;
     }
 
-    void configureProducer(const sp<HIGBP> &producer) {
+    void configureProducer(const sp<HGraphicBufferProducer> &producer) {
         std::lock_guard<std::mutex> lock(mMutex);
         mProducer = producer;
         if (producer) {
@@ -221,7 +225,7 @@ private:
     const std::shared_ptr<C2Allocator> mAllocator;
 
     std::mutex mMutex;
-    sp<HIGBP> mProducer;
+    sp<HGraphicBufferProducer> mProducer;
 
     sp<GraphicBuffer> mBuffers[NUM_BUFFER_SLOTS];
 };
@@ -244,7 +248,7 @@ c2_status_t C2BufferQueueBlockPool::fetchGraphicBlock(
     return C2_CORRUPTED;
 }
 
-void C2BufferQueueBlockPool::configureProducer(const sp<HIGBP> &producer) {
+void C2BufferQueueBlockPool::configureProducer(const sp<HGraphicBufferProducer> &producer) {
     if (mImpl) {
         mImpl->configureProducer(producer);
     }

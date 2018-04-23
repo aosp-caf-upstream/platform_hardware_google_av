@@ -107,6 +107,7 @@ public:
     class Buffers;
     class InputBuffers;
     class OutputBuffers;
+    class OutputBufferQueue;
 
 private:
     class QueueGuard;
@@ -186,6 +187,7 @@ private:
         size_t maxBufferCount;
     };
     Mutexed<OutputSurface> mOutputSurface;
+    std::unique_ptr<OutputBufferQueue> mOutputBufferQueue;
 
     struct InputRefs {
         std::map<unsigned long long, std::shared_ptr<C2Buffer>> bufferRefs;
