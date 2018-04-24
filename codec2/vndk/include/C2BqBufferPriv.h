@@ -22,9 +22,6 @@
 #include <C2Buffer.h>
 #include <media/stagefright/bqhelper/WGraphicBufferProducer.h>
 
-typedef ::android::hardware::graphics::bufferqueue::V1_0::IGraphicBufferProducer HIGBP;
-typedef ::android::TWGraphicBufferProducer<HIGBP> BQBPIGBP;
-
 class C2BufferQueueBlockPool : public C2BlockPool {
 public:
     C2BufferQueueBlockPool(const std::shared_ptr<C2Allocator> &allocator, const local_id_t localId);
@@ -56,7 +53,7 @@ public:
      *
      * @param producer      the IGBP, which will be used to fetch blocks
      */
-    void configureProducer(const android::sp<HIGBP> &producer);
+    void configureProducer(const android::sp<android::HGraphicBufferProducer> &producer);
 private:
     const std::shared_ptr<C2Allocator> mAllocator;
     const local_id_t mLocalId;
