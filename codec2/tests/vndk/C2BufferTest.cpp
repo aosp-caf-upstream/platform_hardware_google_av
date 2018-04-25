@@ -456,7 +456,7 @@ TEST_F(C2BufferTest, GraphicAllocationTest) {
     allocateGraphic(kWidth, kHeight);
 
     uint8_t *addr[C2PlanarLayout::MAX_NUM_PLANES];
-    C2Rect rect{ kWidth, kHeight, 0, 0 };
+    C2Rect rect(kWidth, kHeight);
     C2PlanarLayout layout;
     mapGraphic(rect, &layout, addr);
     ASSERT_NE(nullptr, addr[C2PlanarLayout::PLANE_Y]);
@@ -542,8 +542,7 @@ TEST_F(C2BufferTest, GraphicBlockPoolTest) {
     fillPlane(C2Rect(kWidth / 2, kHeight / 2).at(kWidth / 4, kHeight / 4), vInfo, v, 0x56);
 
     C2Fence fence;
-    C2ConstGraphicBlock constBlock = block->share(
-            { 0, 0, kWidth, kHeight }, fence);
+    C2ConstGraphicBlock constBlock = block->share(C2Rect(kWidth, kHeight), fence);
     block.reset();
 
     C2Acquirable<const C2GraphicView> constViewHolder = constBlock.map();

@@ -940,8 +940,7 @@ c2_status_t objcpy(std::shared_ptr<C2Buffer>* d, const Buffer& s,
                     return C2_BAD_VALUE;
                 }
                 *d = C2Buffer::CreateGraphicBuffer(block->share(
-                        C2Rect(rectInfo->width, rectInfo->height,
-                               rectInfo->left, rectInfo->top),
+                        C2Rect(rectInfo->width, rectInfo->height).at(rectInfo->left, rectInfo->top),
                         dFence));
                 if (!(*d)) {
                     ALOGE("Cannot create a graphic buffer.");

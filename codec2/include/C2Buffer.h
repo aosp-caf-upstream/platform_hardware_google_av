@@ -1336,25 +1336,16 @@ public:
  */
 struct C2Rect {
 // public:
-    uint32_t left;
-    uint32_t top;
     uint32_t width;
     uint32_t height;
+    uint32_t left;
+    uint32_t top;
 
     constexpr inline C2Rect()
         : C2Rect(0, 0, 0, 0) { }
 
     constexpr inline C2Rect(uint32_t width_, uint32_t height_)
         : C2Rect(width_, height_, 0, 0) { }
-
-    /// deprecated. Usage C2Rect(width, height).at(left, top)
-    /// for now allow both (left, top, width, height) and (width, height, left, right)
-    /// construction, assuming correct values
-    constexpr inline C2Rect(uint32_t width_, uint32_t height_, uint32_t left_, uint32_t top_)
-        : left(left_ < width_ ? left_ : width_),
-          top(top_ < height_ ? top_ : height_),
-          width(left_ > width_ ? left_ : width_),
-          height(top_ > height_ ? top_ : height_) { }
 
     constexpr C2Rect inline at(uint32_t left_, uint32_t top_) const {
         return C2Rect(width, height, left_, top_);
@@ -1440,6 +1431,14 @@ struct C2Rect {
     inline constexpr C2Rect normalize() const {
         return C2Rect(c2_max(left, right()) - left, c2_max(top, bottom()) - top, left, top);
     }
+
+private:
+    /// note: potentially unusual argument order
+    constexpr inline C2Rect(uint32_t width_, uint32_t height_, uint32_t left_, uint32_t top_)
+        : width(width_),
+          height(height_),
+          left(left_),
+          top(top_) { }
 };
 
 /**
@@ -1593,10 +1592,10 @@ class _C2PlanarSectionAspect : public _C2PlanarCapacityAspect {
 private:
     inline constexpr _C2PlanarSectionAspect(uint32_t width, uint32_t height, const C2Rect &crop)
         : _C2PlanarCapacityAspect(width, height),
-          mCrop(std::min(width - std::min(crop.left, width), crop.width),
-                std::min(height - std::min(crop.top, height), crop.height),
-                std::min(crop.left, width),
-                std::min(crop.height, height)) {
+          mCrop(C2Rect(std::min(width - std::min(crop.left, width), crop.width),
+                       std::min(height - std::min(crop.top, height), crop.height)).at(
+                               std::min(crop.left, width),
+                               std::min(crop.height, height))) {
     }
 
 public:
@@ -1611,10 +1610,12 @@ public:
         return _C2PlanarSectionAspect(
                 mCrop.width, mCrop.height,
                 // crop and translate |crop| rect
-                C2Rect(c2_min(mCrop.right() - c2_clamp(mCrop.left, crop.left, mCrop.right()), crop.width),
-                       c2_min(mCrop.bottom() - c2_clamp(mCrop.top, crop.top, mCrop.bottom()), crop.height),
-                       c2_clamp(mCrop.left, crop.left, mCrop.right()) - mCrop.left,
-                       c2_clamp(mCrop.top, crop.top, mCrop.bottom()) - mCrop.top));
+                C2Rect(c2_min(mCrop.right() - c2_clamp(mCrop.left, crop.left, mCrop.right()),
+                              crop.width),
+                       c2_min(mCrop.bottom() - c2_clamp(mCrop.top, crop.top, mCrop.bottom()),
+                              crop.height))
+                .at(c2_clamp(mCrop.left, crop.left, mCrop.right()) - mCrop.left,
+                    c2_clamp(mCrop.top, crop.top, mCrop.bottom()) - mCrop.top));
     }
 
 protected:
@@ -1623,11 +1624,11 @@ protected:
 
     inline constexpr _C2PlanarSectionAspect(const _C2PlanarCapacityAspect *parent, const C2Rect &crop)
         : _C2PlanarCapacityAspect(parent),
-          mCrop(parent == nullptr ? C2Rect(0, 0) : ((C2Rect)*parent).intersect(crop).normalize()) { }
+          mCrop(parent == nullptr ? C2Rect() : ((C2Rect)*parent).intersect(crop).normalize()) { }
 
     inline constexpr _C2PlanarSectionAspect(const _C2PlanarSectionAspect *parent, const C2Rect &crop)
         : _C2PlanarCapacityAspect(parent),
-          mCrop(parent == nullptr ? C2Rect(0, 0) : parent->crop().intersect(crop).normalize()) { }
+          mCrop(parent == nullptr ? C2Rect() : parent->crop().intersect(crop).normalize()) { }
 
 private:
     friend class _C2EditablePlanarSectionAspect;

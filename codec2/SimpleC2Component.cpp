@@ -450,7 +450,7 @@ std::shared_ptr<C2Buffer> SimpleC2Component::createLinearBuffer(
 
 std::shared_ptr<C2Buffer> SimpleC2Component::createGraphicBuffer(
         const std::shared_ptr<C2GraphicBlock> &block) {
-    return createGraphicBuffer(block, C2Rect(0, 0, block->width(), block->height()));
+    return createGraphicBuffer(block, C2Rect(block->width(), block->height()));
 }
 
 std::shared_ptr<C2Buffer> SimpleC2Component::createGraphicBuffer(
