@@ -98,8 +98,9 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
 
         // TODO: read settings properly from the interface
         C2VideoSizeStreamTuning::input inputSize;
+        C2StreamUsageTuning::input usage;
         c2_status_t c2Status = intf->query_vb(
-                { &inputSize },
+                { &inputSize, &usage },
                 {},
                 C2_MAY_BLOCK,
                 nullptr);
@@ -112,10 +113,19 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
         // TODO: proper color aspect & dataspace
         android_dataspace dataSpace = HAL_DATASPACE_BT709;
 
+        // TODO: use the usage read from intf
+        // uint32_t grallocUsage =
+        //         C2AndroidMemoryUsage(C2MemoryUsage(usage.value)).
+        //         asGrallocUsage();
+        uint32_t grallocUsage =
+                strncmp(intf->getName().c_str(), "c2.google.", 10) == 0 ?
+                GRALLOC_USAGE_SW_READ_OFTEN :
+                GRALLOC_USAGE_HW_VIDEO_ENCODER;
+
         err = source->configure(
                 this, dataSpace, kBufferCount,
                 inputSize.width, inputSize.height,
-                GRALLOC_USAGE_SW_READ_OFTEN);
+                grallocUsage);
         if (err != OK) {
             ALOGE("Impl::init -- GBS configure failed: %d", err);
             return false;
