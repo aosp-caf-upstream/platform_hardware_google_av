@@ -468,6 +468,14 @@ void CCodec::configure(const sp<AMessage> &msg) {
             }
         }
 
+        // TODO: do this based on component requiring linear allocator for input
+        if (!encoder || audio) {
+            int32_t tmp;
+            if (msg->findInt32("max-input-size", &tmp)) {
+                inputFormat->setInt32(C2_NAME_STREAM_MAX_BUFFER_SIZE_SETTING, tmp);
+            }
+        }
+
         // TODO
 
         return OK;

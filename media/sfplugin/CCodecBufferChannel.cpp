@@ -24,6 +24,7 @@
 #include <C2AllocatorGralloc.h>
 #include <C2PlatformSupport.h>
 #include <C2BlockInternal.h>
+#include <C2Config.h>
 
 #include <android/hardware/cas/native/1.0/IDescrambler.h>
 #include <binder/MemoryDealer.h>
@@ -578,9 +579,11 @@ public:
     using CCodecBufferChannel::InputBuffers::InputBuffers;
 
     bool requestNewBuffer(size_t *index, sp<MediaCodecBuffer> *buffer) override {
+        int32_t capacity = kLinearBufferSize;
+        (void)mFormat->findInt32(C2_NAME_STREAM_MAX_BUFFER_SIZE_SETTING, &capacity);
         // TODO: proper max input size
         // TODO: read usage from intf
-        sp<Codec2Buffer> newBuffer = alloc(kLinearBufferSize);
+        sp<Codec2Buffer> newBuffer = alloc((size_t)capacity);
         if (newBuffer == nullptr) {
             return false;
         }

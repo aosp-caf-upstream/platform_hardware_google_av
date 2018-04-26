@@ -74,6 +74,7 @@ enum C2ParamIndexKind : C2Param::type_index_t {
     kParamIndexChannelCount,
 
     kParamIndexAacStreamFormat,
+    kParamIndexMaxBufferSize,
 
     // video info
 
@@ -174,6 +175,15 @@ C2ENUM(C2AacStreamFormatKind, uint32_t,
 typedef C2StreamParam<C2Info, C2Uint32Value, kParamIndexAacStreamFormat> C2StreamAacFormatInfo;
 constexpr char C2_NAME_STREAM_AAC_FORMAT_SETTING[] = "coded.aac-stream-format";
 
+/**
+ * Hint for the maximum buffer size expected on a stream. This is communicated to clients so they
+ * can preallocate input buffers, or configure downstream components that require a maximum size on
+ * their buffers.
+ *
+ * Read-only. Required to be provided by components on all compressed streams.
+ */
+typedef C2StreamParam<C2Info, C2Uint32Value, kParamIndexMaxBufferSize> C2StreamMaxBufferSizeInfo;
+constexpr char C2_NAME_STREAM_MAX_BUFFER_SIZE_SETTING[] = "raw.max-buffer-size";
 
 /*
    Component description fields:
