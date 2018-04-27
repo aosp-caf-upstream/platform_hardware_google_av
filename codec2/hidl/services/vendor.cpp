@@ -32,6 +32,9 @@
 
 #include <C2Component.h>
 
+// OmxStore is added for visibility by dumpstate.
+#include <media/stagefright/omx/1.0/OmxStore.h>
+
 // This is created by module "codec2.vendor.base.policy". This can be modified.
 static constexpr char kBaseSeccompPolicyPath[] =
         "/vendor/etc/seccomp_policy/codec2.vendor.base.policy";
@@ -142,6 +145,17 @@ int main(int /* argc */, char** /* argv */) {
             } else {
                 ALOGI("Codec2's IComponentStore service created.");
             }
+        }
+    }
+
+    // Register IOmxStore service.
+    {
+        using namespace ::android::hardware::media::omx::V1_0;
+        android::sp<IOmxStore> omxStore = new implementation::OmxStore();
+        if (omxStore == nullptr) {
+            ALOGE("Cannot create IOmxStore HAL service.");
+        } else if (omxStore->registerAsService() != android::OK) {
+            ALOGE("Cannot register IOmxStore HAL service.");
         }
     }
 
