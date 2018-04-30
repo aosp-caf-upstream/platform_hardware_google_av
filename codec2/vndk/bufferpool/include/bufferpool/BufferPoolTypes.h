@@ -23,24 +23,25 @@
 #include <hidl/MQDescriptor.h>
 #include <hidl/Status.h>
 
-struct __attribute__((visibility("hidden"))) _C2BlockPoolData {
-    uint32_t mId; //BufferId
-    // Handle should be copied to somewhere else, and should be managed there.
-    native_handle_t *mHandle;
-
-    _C2BlockPoolData() : mId(0), mHandle(NULL) {}
-
-    _C2BlockPoolData(uint32_t id, native_handle_t *handle)
-            : mId(id), mHandle(handle) {}
-
-    ~_C2BlockPoolData() {
-    }
-};
-
 namespace android {
 namespace hardware {
 namespace media {
 namespace bufferpool {
+
+struct BufferPoolData {
+    uint32_t mId; //BufferId
+    // Handle should be copied to somewhere else, and should be managed there.
+    native_handle_t *mHandle;
+
+    BufferPoolData() : mId(0), mHandle(NULL) {}
+
+    BufferPoolData(uint32_t id, native_handle_t *handle)
+            : mId(id), mHandle(handle) {}
+
+    ~BufferPoolData() {
+    }
+};
+
 namespace V1_0 {
 namespace implementation {
 
@@ -75,7 +76,7 @@ class BufferPoolAllocator {
 public:
 
     /**
-     * Allocate an allocation(buffer) for bufer pool.
+     * Allocate an allocation(buffer) for buffer pool.
      *
      * @param params    allocation parameters
      * @param alloc     created allocation

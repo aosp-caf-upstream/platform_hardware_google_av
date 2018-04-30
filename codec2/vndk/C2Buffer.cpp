@@ -24,8 +24,7 @@
 
 #include <C2BufferPriv.h>
 #include <C2BlockInternal.h>
-
-#include <ClientManager.h>
+#include <bufferpool/ClientManager.h>
 
 namespace {
 
@@ -103,8 +102,6 @@ class BufferDataBuddy : public C2BufferData {
 }  // namespace
 
 /* ========================================== 1D BLOCK ========================================= */
-
-struct C2_HIDE _C2BlockPoolData;
 
 /**
  * This class is the base class for all 1D block and view implementations.
