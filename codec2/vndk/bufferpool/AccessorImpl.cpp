@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "bufferpool"
+#define LOG_TAG "BufferPoolAccessor"
 //#define LOG_NDEBUG 0
 
-#include <inttypes.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -117,7 +116,6 @@ bool contains(std::map<T, std::set<U>> *mapOfSet, T key, U value) {
     }
     return false;
 }
-
 
 int32_t Accessor::Impl::sPid = getpid();
 uint32_t Accessor::Impl::sSeqId = time(NULL);
@@ -304,11 +302,11 @@ bool Accessor::Impl::BufferPool::handleTransferResult(const BufferStatusMessage 
                 mFreeBuffers.insert(message.bufferId);
             }
         }
-        ALOGV("transfer finished %" PRIu64 " %u - %d", message.transactionId,
+        ALOGV("transfer finished %llu %u - %d", (unsigned long long)message.transactionId,
               message.bufferId, deleted);
         return deleted;
     }
-    ALOGV("transfer not found %" PRIu64 " %u", message.transactionId,
+    ALOGV("transfer not found %llu %u", (unsigned long long)message.transactionId,
           message.bufferId);
     return false;
 }
@@ -348,9 +346,8 @@ void Accessor::Impl::BufferPool::processStatusMessages() {
                 break;
         }
         if (ret == false) {
-            ALOGW("buffer status message processing failure - message : %d "
-                  "connection : %" PRId64,
-                  message.newStatus, message.connectionId);
+            ALOGW("buffer status message processing failure - message : %d connection : %lld",
+                  message.newStatus, (long long)message.connectionId);
         }
     }
     messages.clear();

@@ -17,7 +17,7 @@
 #ifndef VTS_VNDK_HIDL_BUFFERPOOL_V1_0_ALLOCATOR_H
 #define VTS_VNDK_HIDL_BUFFERPOOL_V1_0_ALLOCATOR_H
 
-#include <BufferPoolTypes.h>
+#include <bufferpool/BufferPoolTypes.h>
 
 using android::hardware::media::bufferpool::V1_0::ResultStatus;
 using android::hardware::media::bufferpool::V1_0::implementation::

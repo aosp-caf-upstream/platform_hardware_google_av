@@ -18,9 +18,9 @@
 #define ANDROID_HARDWARE_MEDIA_BUFFERPOOL_V1_0_ACCESSOR_H
 
 #include <android/hardware/media/bufferpool/1.0/IAccessor.h>
+#include <bufferpool/BufferPoolTypes.h>
 #include <hidl/MQDescriptor.h>
 #include <hidl/Status.h>
-#include <BufferPoolTypes.h>
 #include "BufferStatus.h"
 
 namespace android {
@@ -61,7 +61,7 @@ struct Accessor : public IAccessor {
     /** Returns whether the accessor is valid. */
     bool isValid();
 
-    /** Allocates a buffer form a buffer pool.
+    /** Allocates a buffer from a buffer pool.
      *
      * @param connectionId  the connection id of the client.
      * @param params        the allocation parameters.
@@ -128,9 +128,6 @@ private:
     class Impl;
     std::unique_ptr<Impl> mImpl;
 };
-
-// FIXME: most likely delete, this is only for passthrough implementations
-// extern "C" IAccessor* HIDL_FETCH_IAccessor(const char* name);
 
 }  // namespace implementation
 }  // namespace V1_0

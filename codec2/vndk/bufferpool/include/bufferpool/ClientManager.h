@@ -21,7 +21,7 @@
 #include <hidl/MQDescriptor.h>
 #include <hidl/Status.h>
 #include <memory>
-#include <BufferPoolTypes.h>
+#include "BufferPoolTypes.h"
 
 namespace android {
 namespace hardware {
@@ -87,7 +87,7 @@ struct ClientManager : public IClientManager {
      */
     ResultStatus allocate(ConnectionId connectionId,
                           const std::vector<uint8_t> &params,
-                          std::shared_ptr<_C2BlockPoolData> *buffer);
+                          std::shared_ptr<BufferPoolData> *buffer);
 
     /**
      * Receives a buffer for the transaction.
@@ -107,7 +107,7 @@ struct ClientManager : public IClientManager {
                          TransactionId transactionId,
                          BufferId bufferId,
                          int64_t timestampUs,
-                         std::shared_ptr<_C2BlockPoolData> *buffer);
+                         std::shared_ptr<BufferPoolData> *buffer);
 
     /**
      * Posts a buffer transfer transaction to the buffer pool. Sends a buffer
@@ -126,7 +126,7 @@ struct ClientManager : public IClientManager {
      */
     ResultStatus postSend(ConnectionId connectionId,
                           ConnectionId receiverId,
-                          const std::shared_ptr<_C2BlockPoolData> &buffer,
+                          const std::shared_ptr<BufferPoolData> &buffer,
                           TransactionId *transactionId,
                           int64_t *timestampUs);
 
@@ -152,9 +152,6 @@ private:
 
     ClientManager();
 };
-
-// FIXME: most likely delete, this is only for passthrough implementations
-// extern "C" IClientManager* HIDL_FETCH_IClientManager(const char* name);
 
 }  // namespace implementation
 }  // namespace V1_0

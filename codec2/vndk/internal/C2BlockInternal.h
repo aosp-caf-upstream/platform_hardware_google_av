@@ -19,7 +19,19 @@
 
 #include <C2Buffer.h>
 
-struct _C2BlockPoolData;
+namespace android {
+namespace hardware {
+namespace media {
+namespace bufferpool {
+
+struct BufferPoolData;
+
+}
+}
+}
+}
+
+typedef android::hardware::media::bufferpool::BufferPoolData _C2BlockPoolData;
 
 /**
  * Internal only interface for creating blocks by block pool/buffer passing implementations.

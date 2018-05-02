@@ -21,9 +21,9 @@
 #include <C2AllocatorIon.h>
 #include <C2Buffer.h>
 #include <C2PlatformSupport.h>
-#include <ClientManager.h>
 #include <android-base/logging.h>
 #include <binder/ProcessState.h>
+#include <bufferpool/ClientManager.h>
 #include <hidl/HidlSupport.h>
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/LegacySupport.h>
@@ -48,6 +48,7 @@ using android::hardware::media::bufferpool::V1_0::implementation::BufferId;
 using android::hardware::media::bufferpool::V1_0::implementation::ClientManager;
 using android::hardware::media::bufferpool::V1_0::implementation::ConnectionId;
 using android::hardware::media::bufferpool::V1_0::implementation::TransactionId;
+using android::hardware::media::bufferpool::BufferPoolData;
 
 namespace {
 
@@ -158,7 +159,7 @@ class BufferpoolMultiTest : public ::testing::Test {
 
     receiveMessage(mCommandPipeFds, &message);
     {
-      std::shared_ptr<_C2BlockPoolData> rbuffer;
+      std::shared_ptr<BufferPoolData> rbuffer;
       ResultStatus status = mManager->receive(
           message.data.connectionId, message.data.transactionId,
           message.data.bufferId, message.data.timestampUs, &rbuffer);
@@ -193,7 +194,7 @@ TEST_F(BufferpoolMultiTest, TransferBuffer) {
       });
   ASSERT_TRUE(status == ResultStatus::OK);
   {
-    std::shared_ptr<_C2BlockPoolData> sbuffer;
+    std::shared_ptr<BufferPoolData> sbuffer;
     TransactionId transactionId;
     int64_t postUs;
     std::vector<uint8_t> vecParams;

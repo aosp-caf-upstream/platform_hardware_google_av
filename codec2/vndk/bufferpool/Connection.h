@@ -18,9 +18,9 @@
 #define ANDROID_HARDWARE_MEDIA_BUFFERPOOL_V1_0_CONNECTION_H
 
 #include <android/hardware/media/bufferpool/1.0/IConnection.h>
+#include <bufferpool/BufferPoolTypes.h>
 #include <hidl/MQDescriptor.h>
 #include <hidl/Status.h>
-#include <BufferPoolTypes.h>
 #include "Accessor.h"
 
 namespace android {
@@ -79,9 +79,6 @@ private:
     sp<Accessor> mAccessor;
     ConnectionId mConnectionId;
 };
-
-// FIXME: most likely delete, this is only for passthrough implementations
-// extern "C" IConnection* HIDL_FETCH_IConnection(const char* name);
 
 }  // namespace implementation
 }  // namespace V1_0
