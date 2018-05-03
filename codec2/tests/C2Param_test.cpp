@@ -20,7 +20,6 @@
 #include <gtest/gtest.h>
 
 #define __C2_GENERATE_GLOBAL_VARS__
-//#include <util/C2ParamUtils.h>
 #include <C2ParamDef.h>
 
 #include <list>

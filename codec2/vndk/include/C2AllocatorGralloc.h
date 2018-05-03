@@ -76,6 +76,8 @@ public:
 
     static bool isValid(const C2Handle* const o);
 
+    static void useIgbp(const C2Handle* const o);
+
 private:
     class Impl;
     Impl *mImpl;

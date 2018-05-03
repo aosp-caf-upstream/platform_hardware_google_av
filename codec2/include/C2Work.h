@@ -18,15 +18,15 @@
 
 #define C2WORK_H_
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <C2Param.h>
 #include <C2Buffer.h>
-#include <C2Config.h>
+#include <C2Param.h>
 
 #include <memory>
 #include <list>
 #include <vector>
+
+#include <stdint.h>
+#include <stdbool.h>
 
 /// \defgroup work Work and data processing
 /// @{

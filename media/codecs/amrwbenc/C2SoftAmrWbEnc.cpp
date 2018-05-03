@@ -23,29 +23,87 @@
 #include "cmnMemory.h"
 
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
 
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.amrwb.encoder";
+constexpr char COMPONENT_NAME[] = "c2.google.amrwb.encoder";
 
-static std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatAudio)
-            .outputFormat(C2FormatCompressed)
-            .inputMediaType(MEDIA_MIMETYPE_AUDIO_RAW)
-            .outputMediaType(MEDIA_MIMETYPE_AUDIO_AMR_WB)
-            .build();
-}
+class C2SoftAmrWbEnc::IntfImpl : public C2InterfaceHelper {
+   public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper>& helper)
+        : C2InterfaceHelper(helper) {
+        setDerivedInstance(this);
 
-C2SoftAmrWbEnc::C2SoftAmrWbEnc(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+        addParameter(
+            DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(
+                    new C2StreamFormatConfig::input(0u, C2FormatAudio))
+                .build());
+
+        addParameter(
+            DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(
+                    new C2StreamFormatConfig::output(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+            DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                    MEDIA_MIMETYPE_AUDIO_RAW))
+                .build());
+
+        addParameter(
+            DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                    MEDIA_MIMETYPE_AUDIO_AMR_WB))
+                .build());
+
+        addParameter(
+                DefineParam(mChannelCount, C2_NAME_STREAM_CHANNEL_COUNT_SETTING)
+                .withDefault(new C2StreamChannelCountInfo::input(0u, 1))
+                .withFields({C2F(mChannelCount, value).equalTo(1)})
+                .withSetter((Setter<decltype(*mChannelCount)>::StrictValueWithNoDeps))
+                .build());
+
+        addParameter(
+            DefineParam(mSampleRate, C2_NAME_STREAM_SAMPLE_RATE_SETTING)
+                .withDefault(new C2StreamSampleRateInfo::input(0u, 16000))
+                .withFields({C2F(mSampleRate, value).equalTo(16000)})
+                .withSetter(
+                    (Setter<decltype(*mSampleRate)>::StrictValueWithNoDeps))
+                .build());
+
+        addParameter(
+                DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::output(0u, 6600))
+                .withFields({C2F(mBitrate, value).inRange(6600, 23850)})
+                .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
+
+    uint32_t getSampleRate() const { return mSampleRate->value; }
+    uint32_t getChannelCount() const { return mChannelCount->value; }
+    uint32_t getBitrate() const { return mBitrate->value; }
+
+   private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamSampleRateInfo::input> mSampleRate;
+    std::shared_ptr<C2StreamChannelCountInfo::input> mChannelCount;
+    std::shared_ptr<C2BitrateTuning::output> mBitrate;
+};
+
+C2SoftAmrWbEnc::C2SoftAmrWbEnc(const char* name, c2_node_id_t id,
+                               const std::shared_ptr<IntfImpl>& intfImpl)
+    : SimpleC2Component(
+          std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mEncoderHandle(nullptr),
       mApiHandle(nullptr),
       mMemOperator(nullptr) {
@@ -225,8 +283,8 @@ void C2SoftAmrWbEnc::process(
         work->result = wView.error();
         return;
     }
-
-    uint64_t outTimeStamp = mProcessedSamples * 1000000ll / kSampleRate;
+    uint64_t outTimeStamp =
+        mProcessedSamples * 1000000ll / mIntf->getSampleRate();
     const uint8_t *inPtr = rView.data() + inOffset;
     size_t inPos = 0;
     size_t outPos = 0;
@@ -293,11 +351,19 @@ c2_status_t C2SoftAmrWbEnc::drain(
 
 class C2SoftAmrWbEncFactory : public C2ComponentFactory {
 public:
+    C2SoftAmrWbEncFactory()
+        : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+              GetCodec2PlatformComponentStore()->getParamReflector())) {}
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftAmrWbEnc(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+            new C2SoftAmrWbEnc(
+                COMPONENT_NAME, id,
+                std::make_shared<C2SoftAmrWbEnc::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
@@ -305,11 +371,18 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+            new SimpleInterface<C2SoftAmrWbEnc::IntfImpl>(
+                COMPONENT_NAME, id,
+                std::make_shared<C2SoftAmrWbEnc::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftAmrWbEncFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

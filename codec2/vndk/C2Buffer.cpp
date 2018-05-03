@@ -22,12 +22,18 @@
 #include <map>
 #include <mutex>
 
+#include <C2AllocatorIon.h>
+#include <C2AllocatorGralloc.h>
 #include <C2BufferPriv.h>
 #include <C2BlockInternal.h>
 #include <bufferpool/ClientManager.h>
 
 namespace {
 
+using android::C2AllocatorGralloc;
+using android::C2AllocatorIon;
+using android::hardware::media::bufferpool::BufferPoolData;
+using android::hardware::media::bufferpool::V1_0::IAccessor;
 using android::hardware::media::bufferpool::V1_0::ResultStatus;
 using android::hardware::media::bufferpool::V1_0::implementation::BufferPoolAllocation;
 using android::hardware::media::bufferpool::V1_0::implementation::BufferPoolAllocator;
@@ -338,6 +344,37 @@ c2_status_t C2BasicLinearBlockPool::fetchLinearBlock(
     return C2_OK;
 }
 
+struct C2_HIDE C2PooledBlockPoolData : _C2BlockPoolData {
+
+    virtual Type getType() const override {
+        return TYPE_BUFFERPOOL;
+    }
+
+    void getBufferPoolData(std::shared_ptr<BufferPoolData> *data) const {
+        data->reset();
+        *data = mData;
+    }
+
+    C2PooledBlockPoolData(const std::shared_ptr<BufferPoolData> &data) : mData(data) {}
+
+    virtual ~C2PooledBlockPoolData() override {}
+
+private:
+    std::shared_ptr<BufferPoolData> mData;
+};
+
+bool _C2BlockFactory::GetBufferPoolData(
+        const std::shared_ptr<const _C2BlockPoolData> &data,
+        std::shared_ptr<BufferPoolData> *bufferPoolData) {
+    if (data && data->getType() == _C2BlockPoolData::TYPE_BUFFERPOOL) {
+        const std::shared_ptr<const C2PooledBlockPoolData> poolData =
+                std::static_pointer_cast<const C2PooledBlockPoolData>(data);
+        poolData->getBufferPoolData(bufferPoolData);
+        return true;
+    }
+    return false;
+}
+
 std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
         const std::shared_ptr<C2LinearAllocation> &alloc,
         const std::shared_ptr<_C2BlockPoolData> &data, size_t offset, size_t size) {
@@ -345,6 +382,53 @@ std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
         std::make_shared<C2Block1D::Impl>(alloc, data, offset, size);
     return std::shared_ptr<C2LinearBlock>(new C2LinearBlock(impl, *impl));
 }
+
+std::shared_ptr<const _C2BlockPoolData> _C2BlockFactory::GetLinearBlockPoolData(
+        const C2Block1D &block) {
+    if (block.mImpl) {
+        return block.mImpl->poolData();
+    }
+    return nullptr;
+}
+
+std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
+        const C2Handle *handle) {
+    // TODO: get proper allocator? and mutex?
+    static std::unique_ptr<C2AllocatorIon> sAllocator = std::make_unique<C2AllocatorIon>(0);
+
+    std::shared_ptr<C2LinearAllocation> alloc;
+    if (C2AllocatorIon::isValid(handle)) {
+        c2_status_t err = sAllocator->priorLinearAllocation(handle, &alloc);
+        if (err == C2_OK) {
+            std::shared_ptr<C2LinearBlock> block = _C2BlockFactory::CreateLinearBlock(alloc);
+            return block;
+        }
+    }
+    return nullptr;
+}
+
+std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
+        const std::shared_ptr<BufferPoolData> &data) {
+    // TODO: get proper allocator? and mutex?
+    static std::unique_ptr<C2AllocatorIon> sAllocator = std::make_unique<C2AllocatorIon>(0);
+
+    std::shared_ptr<C2LinearAllocation> alloc;
+    if (C2AllocatorIon::isValid(data->mHandle)) {
+        native_handle_t *handle = native_handle_clone(data->mHandle);
+        if (handle) {
+            c2_status_t err = sAllocator->priorLinearAllocation(handle, &alloc);
+            const std::shared_ptr<C2PooledBlockPoolData> poolData =
+                    std::make_shared<C2PooledBlockPoolData>(data);
+            if (err == C2_OK && poolData) {
+                // TODO: config params?
+                std::shared_ptr<C2LinearBlock> block =
+                        _C2BlockFactory::CreateLinearBlock(alloc, poolData);
+                return block;
+            }
+        }
+    }
+    return nullptr;
+};
 
 /**
  * Wrapped C2Allocator which is injected to buffer pool on behalf of
@@ -551,18 +635,22 @@ public:
         }
         std::vector<uint8_t> params;
         mAllocator->getLinearParams(capacity, usage, &params);
-        std::shared_ptr<_C2BlockPoolData> poolData;
+        std::shared_ptr<BufferPoolData> bufferPoolData;
         ResultStatus status = mBufferPoolManager->allocate(
-                mConnectionId, params, &poolData);
+                mConnectionId, params, &bufferPoolData);
         if (status == ResultStatus::OK) {
-            std::shared_ptr<C2LinearAllocation> alloc;
-            c2_status_t err = mAllocator->priorLinearAllocation(
-                    poolData->mHandle, &alloc);
-            if (err == C2_OK && poolData && alloc) {
-                *block = _C2BlockFactory::CreateLinearBlock(
-                        alloc, poolData, 0, capacity);
-                if (*block) {
-                    return C2_OK;
+            native_handle_t *handle = bufferPoolData ?
+                    native_handle_clone(bufferPoolData->mHandle) : nullptr;
+            if (handle) {
+                std::shared_ptr<C2LinearAllocation> alloc;
+                std::shared_ptr<C2PooledBlockPoolData> poolData =
+                        std::make_shared<C2PooledBlockPoolData>(bufferPoolData);
+                c2_status_t err = mAllocator->priorLinearAllocation(handle, &alloc);
+                if (err == C2_OK && poolData && alloc) {
+                    *block = _C2BlockFactory::CreateLinearBlock(alloc, poolData, 0, capacity);
+                    if (*block) {
+                        return C2_OK;
+                    }
                 }
             }
             return C2_NO_MEMORY;
@@ -571,6 +659,17 @@ public:
             return C2_NO_MEMORY;
         }
         return C2_CORRUPTED;
+    }
+
+    ConnectionId getConnectionId() {
+        return mInit != C2_OK ? 0 : mConnectionId;
+    }
+
+    bool getAccessor(android::sp<IAccessor> *accessor) {
+        if (mInit == C2_OK) {
+            return mBufferPoolManager->getAccessor(mConnectionId, accessor) == ResultStatus::OK;
+        }
+        return false;
     }
 
 private:
@@ -595,6 +694,20 @@ c2_status_t C2PooledBlockPool::fetchLinearBlock(
         return mImpl->fetchLinearBlock(capacity, usage, block);
     }
     return C2_CORRUPTED;
+}
+
+int64_t C2PooledBlockPool::getConnectionId() {
+    if (mImpl) {
+        return mImpl->getConnectionId();
+    }
+    return 0;
+}
+
+bool C2PooledBlockPool::getAccessor(android::sp<IAccessor> *accessor) {
+    if (mImpl) {
+        return mImpl->getAccessor(accessor);
+    }
+    return false;
 }
 
 /* ========================================== 2D BLOCK ========================================= */
@@ -918,6 +1031,38 @@ std::shared_ptr<C2GraphicBlock> _C2BlockFactory::CreateGraphicBlock(
     return std::shared_ptr<C2GraphicBlock>(new C2GraphicBlock(impl, *impl));
 }
 
+std::shared_ptr<const _C2BlockPoolData> _C2BlockFactory::GetGraphicBlockPoolData(
+        const C2Block2D &block) {
+    if (block.mImpl) {
+        return block.mImpl->poolData();
+    }
+    return nullptr;
+}
+
+std::shared_ptr<C2GraphicBlock> _C2BlockFactory::CreateGraphicBlock(
+        const std::shared_ptr<BufferPoolData> &data) {
+    // TODO: get proper allocator? and mutex?
+    static std::unique_ptr<C2AllocatorGralloc> sAllocator = std::make_unique<C2AllocatorGralloc>(0);
+
+    std::shared_ptr<C2GraphicAllocation> alloc;
+    if (C2AllocatorGralloc::isValid(data->mHandle)) {
+        native_handle_t *handle = native_handle_clone(data->mHandle);
+        if (handle) {
+            c2_status_t err = sAllocator->priorGraphicAllocation(handle, &alloc);
+            const std::shared_ptr<C2PooledBlockPoolData> poolData =
+                    std::make_shared<C2PooledBlockPoolData>(data);
+            if (err == C2_OK && poolData) {
+                // TODO: config setup?
+                std::shared_ptr<C2GraphicBlock> block =
+                        _C2BlockFactory::CreateGraphicBlock(alloc, poolData);
+                return block;
+            }
+        }
+    }
+    return nullptr;
+};
+
+
 /* ========================================== BUFFER ========================================= */
 
 class C2BufferData::Impl {
@@ -932,12 +1077,12 @@ public:
           mGraphicBlocks(blocks) {
     }
 
-    Type type() const { return mType; }
+    type_t type() const { return mType; }
     const std::vector<C2ConstLinearBlock> &linearBlocks() const { return mLinearBlocks; }
     const std::vector<C2ConstGraphicBlock> &graphicBlocks() const { return mGraphicBlocks; }
 
 private:
-    Type mType;
+    type_t mType;
     std::vector<C2ConstLinearBlock> mLinearBlocks;
     std::vector<C2ConstGraphicBlock> mGraphicBlocks;
 };
@@ -945,7 +1090,7 @@ private:
 C2BufferData::C2BufferData(const std::vector<C2ConstLinearBlock> &blocks) : mImpl(new Impl(blocks)) {}
 C2BufferData::C2BufferData(const std::vector<C2ConstGraphicBlock> &blocks) : mImpl(new Impl(blocks)) {}
 
-C2BufferData::Type C2BufferData::type() const { return mImpl->type(); }
+C2BufferData::type_t C2BufferData::type() const { return mImpl->type(); }
 
 const std::vector<C2ConstLinearBlock> C2BufferData::linearBlocks() const {
     return mImpl->linearBlocks();

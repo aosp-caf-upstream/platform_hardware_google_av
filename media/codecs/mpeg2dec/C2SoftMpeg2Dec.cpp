@@ -25,26 +25,69 @@
 #include "C2SoftMpeg2Dec.h"
 
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
 
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.mpeg2.decoder";
+constexpr char COMPONENT_NAME[] = "c2.google.mpeg2.decoder";
 
-static std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatCompressed)
-            .outputFormat(C2FormatVideo)
-            .inputMediaType(MEDIA_MIMETYPE_VIDEO_MPEG2)
-            .outputMediaType(MEDIA_MIMETYPE_VIDEO_RAW)
-            .build();
-}
+class C2SoftMpeg2Dec::IntfImpl : public C2InterfaceHelper {
+public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
+
+        setDerivedInstance(this);
+
+        addParameter(
+                DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::input(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::output(0u, C2FormatVideo))
+                .build());
+
+        addParameter(
+                DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                        MEDIA_MIMETYPE_VIDEO_MPEG2))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                        MEDIA_MIMETYPE_VIDEO_RAW))
+                .build());
+
+        addParameter(
+                DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_INFO)
+                .withDefault(new C2VideoSizeStreamInfo::output(0u, 320, 240))
+                .withFields({
+                    C2F(mSize, width).inRange(16, 1920, 4),
+                    C2F(mSize, height).inRange(16, 1088, 4),
+                })
+                .withSetter(SizeSetter)
+                .build());
+    }
+
+    static C2R SizeSetter(bool mayBlock, C2P<C2VideoSizeStreamInfo::output> &me) {
+        (void)mayBlock;
+        // TODO: maybe apply block limit?
+        return me.F(me.v.width).validatePossible(me.v.width).plus(
+                me.F(me.v.height).validatePossible(me.v.height));
+    }
+
+private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2VideoSizeStreamInfo::output> mSize;
+};
 
 static size_t getCpuCoreCount() {
     long cpuCoreCount = 1;
@@ -67,14 +110,18 @@ static void ivd_aligned_free(void *mem) {
     free(mem);
 }
 
-C2SoftMpeg2Dec::C2SoftMpeg2Dec(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
-            mDecHandle(nullptr),
-            mMemRecords(nullptr),
-            mOutBufferDrain(nullptr),
-            mIvColorformat(IV_YUV_420P),
-            mWidth(320),
-            mHeight(240) {
+C2SoftMpeg2Dec::C2SoftMpeg2Dec(
+        const char *name,
+        c2_node_id_t id,
+        const std::shared_ptr<IntfImpl> &intfImpl)
+    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+        mIntf(intfImpl),
+        mDecHandle(nullptr),
+        mMemRecords(nullptr),
+        mOutBufferDrain(nullptr),
+        mIvColorformat(IV_YUV_420P),
+        mWidth(320),
+        mHeight(240) {
     // If input dump is enabled, then open create an empty file
     GENERATE_FILE_NAMES();
     CREATE_DUMP_FILE(mInFile);
@@ -609,6 +656,7 @@ void C2SoftMpeg2Dec::process(
         const std::shared_ptr<C2BlockPool> &pool) {
     work->result = C2_OK;
     work->workletsProcessed = 0u;
+    work->worklets.front()->output.configUpdate.clear();
     if (mSignalledError || mSignalledOutputEos) {
         work->result = C2_BAD_VALUE;
         return;
@@ -669,6 +717,23 @@ void C2SoftMpeg2Dec::process(
             resetPlugin();
             mWidth = s_decode_op.u4_pic_wd;
             mHeight = s_decode_op.u4_pic_ht;
+
+            ALOGI("Configuring decoder: mWidth %d , mHeight %d ",
+                   mWidth, mHeight);
+            C2VideoSizeStreamInfo::output size(0u, mWidth, mHeight);
+            std::vector<std::unique_ptr<C2SettingResult>> failures;
+            c2_status_t err =
+                mIntf->config({&size}, C2_MAY_BLOCK, &failures);
+            if (err == OK) {
+                work->worklets.front()->output.configUpdate.push_back(
+                    C2Param::Copy(size));
+            } else {
+                ALOGE("Cannot set width and height");
+                mSignalledError = true;
+                work->result = C2_CORRUPTED;
+                return;
+            }
+
             if (OK != reInitDecoder()) {
                 ALOGE("Failed to reinitialize decoder");
                 mSignalledError = true;
@@ -681,9 +746,30 @@ void C2SoftMpeg2Dec::process(
             drainInternal(DRAIN_COMPONENT_NO_EOS, pool, work);
             resetDecoder();
             resetPlugin();
-            mWidth = s_decode_op.u4_pic_wd;
-            mHeight = s_decode_op.u4_pic_ht;
             continue;
+        }
+        if (0 < s_decode_op.u4_pic_wd && 0 < s_decode_op.u4_pic_ht) {
+            if (s_decode_op.u4_pic_wd != mWidth ||  s_decode_op.u4_pic_ht != mHeight) {
+                mWidth = s_decode_op.u4_pic_wd;
+                mHeight = s_decode_op.u4_pic_ht;
+                CHECK_EQ(0u, s_decode_op.u4_output_present);
+
+                ALOGI("Configuring decoder out: mWidth %d , mHeight %d ",
+                       mWidth, mHeight);
+                C2VideoSizeStreamInfo::output size(0u, mWidth, mHeight);
+                std::vector<std::unique_ptr<C2SettingResult>> failures;
+                c2_status_t err =
+                    mIntf->config({&size}, C2_MAY_BLOCK, &failures);
+                if (err == OK) {
+                    work->worklets.front()->output.configUpdate.push_back(
+                        C2Param::Copy(size));
+                } else {
+                    ALOGE("Cannot set width and height");
+                    mSignalledError = true;
+                    work->result = C2_CORRUPTED;
+                    return;
+                }
+            }
         }
 
         (void) getSeqInfo();
@@ -764,11 +850,19 @@ c2_status_t C2SoftMpeg2Dec::drain(
 
 class C2SoftMpeg2DecFactory : public C2ComponentFactory {
 public:
+    C2SoftMpeg2DecFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+            GetCodec2PlatformComponentStore()->getParamReflector())) {
+    }
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftMpeg2Dec(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+                new C2SoftMpeg2Dec(COMPONENT_NAME,
+                                   id,
+                                   std::make_shared<C2SoftMpeg2Dec::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
@@ -776,11 +870,17 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+                new SimpleInterface<C2SoftMpeg2Dec::IntfImpl>(
+                        COMPONENT_NAME, id, std::make_shared<C2SoftMpeg2Dec::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftMpeg2DecFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

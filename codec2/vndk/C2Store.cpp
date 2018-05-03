@@ -23,6 +23,7 @@
 #include <C2BufferPriv.h>
 #include <C2BqBufferPriv.h>
 #include <C2Component.h>
+#include <C2Config.h>
 #include <C2PlatformSupport.h>
 #include <util/C2InterfaceHelper.h>
 
@@ -144,11 +145,11 @@ public:
                 res = allocatorStore->fetchAllocator(
                         C2AllocatorStore::DEFAULT_LINEAR, &allocator);
                 if (res == C2_OK) {
-                    std::shared_ptr<C2PooledBlockPool> ptr =
+                    std::shared_ptr<C2BlockPool> ptr =
                             std::make_shared<C2PooledBlockPool>(
                                     allocator, poolId);
                     *pool = ptr;
-                    mIonBlockPools[poolId] = ptr;
+                    mBlockPools[poolId] = ptr;
                     mComponents[poolId] = component;
                 }
                 break;
@@ -156,11 +157,11 @@ public:
                 res = allocatorStore->fetchAllocator(
                         C2AllocatorStore::DEFAULT_GRAPHIC, &allocator);
                 if (res == C2_OK) {
-                    std::shared_ptr<C2BufferQueueBlockPool> ptr =
+                    std::shared_ptr<C2BlockPool> ptr =
                             std::make_shared<C2BufferQueueBlockPool>(
                                     allocator, poolId);
                     *pool = ptr;
-                    mBqBlockPools[poolId] = ptr;
+                    mBlockPools[poolId] = ptr;
                     mComponents[poolId] = component;
                 }
                 break;
@@ -183,51 +184,16 @@ public:
             std::shared_ptr<C2BlockPool> *pool) {
         // TODO: use one iterator for mulitple blockpool type scalability.
         std::shared_ptr<C2BlockPool> ptr;
-        auto ionIt = mIonBlockPools.find(blockPoolId);
-        if (ionIt != mIonBlockPools.end()) {
-            ptr = ionIt->second.lock();
+        auto it = mBlockPools.find(blockPoolId);
+        if (it != mBlockPools.end()) {
+            ptr = it->second.lock();
             if (!ptr) {
-                mIonBlockPools.erase(ionIt);
+                mBlockPools.erase(it);
                 mComponents.erase(blockPoolId);
             } else {
                 auto found = mComponents.find(blockPoolId);
                 if (component == found->second.lock()) {
                     *pool = ptr;
-                    return true;
-                }
-            }
-        }
-        auto bqIt = mBqBlockPools.find(blockPoolId);
-        if (bqIt != mBqBlockPools.end()) {
-            ptr = bqIt->second.lock();
-            if (!ptr) {
-                mBqBlockPools.erase(bqIt);
-                mComponents.erase(blockPoolId);
-            } else {
-                auto found = mComponents.find(blockPoolId);
-                if (component == found->second.lock()) {
-                    *pool = ptr;
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    bool setBufferQueue(
-            C2BlockPool::local_id_t blockPoolId,
-            std::shared_ptr<const C2Component> component,
-            const sp<HGraphicBufferProducer> &producer) {
-        auto bqIt = mBqBlockPools.find(blockPoolId);
-        if (bqIt != mBqBlockPools.end()) {
-            std::shared_ptr<C2BufferQueueBlockPool> pool = bqIt->second.lock();
-            if (!pool) {
-                mBqBlockPools.erase(bqIt);
-                mComponents.erase(blockPoolId);
-            } else {
-                auto found = mComponents.find(blockPoolId);
-                if (component == found->second.lock()) {
-                    pool->configureProducer(producer);
                     return true;
                 }
             }
@@ -237,9 +203,8 @@ public:
 
 private:
     C2BlockPool::local_id_t mBlockPoolSeqId;
-    std::map<C2BlockPool::local_id_t, std::weak_ptr<C2PooledBlockPool>> mIonBlockPools;
-    std::map<C2BlockPool::local_id_t, std::weak_ptr<C2BufferQueueBlockPool>> mBqBlockPools;
 
+    std::map<C2BlockPool::local_id_t, std::weak_ptr<C2BlockPool>> mBlockPools;
     std::map<C2BlockPool::local_id_t, std::weak_ptr<const C2Component>> mComponents;
 };
 

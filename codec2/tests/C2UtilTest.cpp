@@ -19,11 +19,9 @@
 
 #include <gtest/gtest.h>
 
-#include <C2Config.h>
-
 #define __C2_GENERATE_GLOBAL_VARS__
-#include <util/_C2MacroUtils.h>
-#include <util/C2ParamUtils.h>
+#include <_C2MacroUtils.h>
+#include <C2Enum.h>
 
 /** \file
  * Tests for vndk/util.
@@ -47,7 +45,7 @@ static_assert(64 == _C2_ARGC(
         26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
         49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,), "should be 64");
 
-/* ---------------------------------------- C2ParamUtils ---------------------------------------- */
+/* ---------------------------------------- _C2EnumUtils ---------------------------------------- */
 
 class C2UtilTest : public ::testing::Test {
 };
@@ -82,42 +80,40 @@ TEST_F(C2UtilTest, EnumUtilsTest) {
       { "invalid", Invalid } });
     Enum3 e3;
     C2FieldDescriptor::namedValuesFor(e3);
-}
 
-TEST_F(C2UtilTest, ParamUtilsTest) {
     // upper case
-    EXPECT_EQ("yes", C2ParamUtils::camelCaseToDashed("YES"));
-    EXPECT_EQ("no", C2ParamUtils::camelCaseToDashed("NO"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("YES_NO"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("YES__NO"));
-    EXPECT_EQ("a2dp", C2ParamUtils::camelCaseToDashed("A2DP"));
-    EXPECT_EQ("mp2-ts", C2ParamUtils::camelCaseToDashed("MP2_TS"));
-    EXPECT_EQ("block-2d", C2ParamUtils::camelCaseToDashed("BLOCK_2D"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("MPEG_2_TS"));
-    EXPECT_EQ("_hidden-value", C2ParamUtils::camelCaseToDashed("_HIDDEN_VALUE"));
-    EXPECT_EQ("__hidden-value2", C2ParamUtils::camelCaseToDashed("__HIDDEN_VALUE2"));
-    EXPECT_EQ("__hidden-value-2", C2ParamUtils::camelCaseToDashed("__HIDDEN_VALUE_2"));
+    EXPECT_EQ("yes", _C2EnumUtils::camelCaseToDashed("YES"));
+    EXPECT_EQ("no", _C2EnumUtils::camelCaseToDashed("NO"));
+    EXPECT_EQ("yes-no", _C2EnumUtils::camelCaseToDashed("YES_NO"));
+    EXPECT_EQ("yes-no", _C2EnumUtils::camelCaseToDashed("YES__NO"));
+    EXPECT_EQ("a2dp", _C2EnumUtils::camelCaseToDashed("A2DP"));
+    EXPECT_EQ("mp2-ts", _C2EnumUtils::camelCaseToDashed("MP2_TS"));
+    EXPECT_EQ("block-2d", _C2EnumUtils::camelCaseToDashed("BLOCK_2D"));
+    EXPECT_EQ("mpeg-2-ts", _C2EnumUtils::camelCaseToDashed("MPEG_2_TS"));
+    EXPECT_EQ("_hidden-value", _C2EnumUtils::camelCaseToDashed("_HIDDEN_VALUE"));
+    EXPECT_EQ("__hidden-value2", _C2EnumUtils::camelCaseToDashed("__HIDDEN_VALUE2"));
+    EXPECT_EQ("__hidden-value-2", _C2EnumUtils::camelCaseToDashed("__HIDDEN_VALUE_2"));
 
     // camel case
-    EXPECT_EQ("yes", C2ParamUtils::camelCaseToDashed("Yes"));
-    EXPECT_EQ("no", C2ParamUtils::camelCaseToDashed("No"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("YesNo"));
-    EXPECT_EQ("yes-no", C2ParamUtils::camelCaseToDashed("Yes_No"));
-    EXPECT_EQ("mp2-ts", C2ParamUtils::camelCaseToDashed("MP2Ts"));
-    EXPECT_EQ("block-2d", C2ParamUtils::camelCaseToDashed("Block2D"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("Mpeg2ts"));
-    EXPECT_EQ("_hidden-value", C2ParamUtils::camelCaseToDashed("_HiddenValue"));
-    EXPECT_EQ("__hidden-value-2", C2ParamUtils::camelCaseToDashed("__HiddenValue2"));
+    EXPECT_EQ("yes", _C2EnumUtils::camelCaseToDashed("Yes"));
+    EXPECT_EQ("no", _C2EnumUtils::camelCaseToDashed("No"));
+    EXPECT_EQ("yes-no", _C2EnumUtils::camelCaseToDashed("YesNo"));
+    EXPECT_EQ("yes-no", _C2EnumUtils::camelCaseToDashed("Yes_No"));
+    EXPECT_EQ("mp2-ts", _C2EnumUtils::camelCaseToDashed("MP2Ts"));
+    EXPECT_EQ("block-2d", _C2EnumUtils::camelCaseToDashed("Block2D"));
+    EXPECT_EQ("mpeg-2-ts", _C2EnumUtils::camelCaseToDashed("Mpeg2ts"));
+    EXPECT_EQ("_hidden-value", _C2EnumUtils::camelCaseToDashed("_HiddenValue"));
+    EXPECT_EQ("__hidden-value-2", _C2EnumUtils::camelCaseToDashed("__HiddenValue2"));
 
     // mixed case
-    EXPECT_EQ("mp2t-s", C2ParamUtils::camelCaseToDashed("MP2T_s"));
-    EXPECT_EQ("block-2d", C2ParamUtils::camelCaseToDashed("Block_2D"));
-    EXPECT_EQ("block-2-d", C2ParamUtils::camelCaseToDashed("Block2_D"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("Mpeg_2ts"));
-    EXPECT_EQ("mpeg-2-ts", C2ParamUtils::camelCaseToDashed("Mpeg_2_TS"));
-    EXPECT_EQ("_hidden-value", C2ParamUtils::camelCaseToDashed("_Hidden__VALUE"));
-    EXPECT_EQ("__hidden-value-2", C2ParamUtils::camelCaseToDashed("__HiddenValue_2"));
-    EXPECT_EQ("_2", C2ParamUtils::camelCaseToDashed("_2"));
-    EXPECT_EQ("__23", C2ParamUtils::camelCaseToDashed("__23"));
+    EXPECT_EQ("mp2t-s", _C2EnumUtils::camelCaseToDashed("MP2T_s"));
+    EXPECT_EQ("block-2d", _C2EnumUtils::camelCaseToDashed("Block_2D"));
+    EXPECT_EQ("block-2-d", _C2EnumUtils::camelCaseToDashed("Block2_D"));
+    EXPECT_EQ("mpeg-2-ts", _C2EnumUtils::camelCaseToDashed("Mpeg_2ts"));
+    EXPECT_EQ("mpeg-2-ts", _C2EnumUtils::camelCaseToDashed("Mpeg_2_TS"));
+    EXPECT_EQ("_hidden-value", _C2EnumUtils::camelCaseToDashed("_Hidden__VALUE"));
+    EXPECT_EQ("__hidden-value-2", _C2EnumUtils::camelCaseToDashed("__HiddenValue_2"));
+    EXPECT_EQ("_2", _C2EnumUtils::camelCaseToDashed("_2"));
+    EXPECT_EQ("__23", _C2EnumUtils::camelCaseToDashed("__23"));
 }
 

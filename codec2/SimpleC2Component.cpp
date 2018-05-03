@@ -20,6 +20,7 @@
 
 #include <inttypes.h>
 
+#include <C2Config.h>
 #include <C2PlatformSupport.h>
 #include <SimpleC2Component.h>
 

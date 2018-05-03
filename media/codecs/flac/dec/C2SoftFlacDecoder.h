@@ -25,7 +25,10 @@
 namespace android {
 
 struct C2SoftFlacDecoder : public SimpleC2Component {
-    C2SoftFlacDecoder(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftFlacDecoder(const char *name, c2_node_id_t id,
+                      const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftFlacDecoder();
 
     // From SimpleC2Component
@@ -46,6 +49,7 @@ private:
         kMaxBlockSize   = 4096
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
     FLACDecoder *mFLACDecoder;
     FLAC__StreamMetadata_StreamInfo mStreamInfo;
     bool mSignalledError;

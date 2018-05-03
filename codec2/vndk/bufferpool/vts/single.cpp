@@ -153,8 +153,7 @@ TEST_F(BufferpoolSingleTest, TransferBuffer) {
 
   status = mManager->allocate(mConnectionId, vecParams, &sbuffer);
   ASSERT_TRUE(status == ResultStatus::OK);
-  status = mManager->postSend(mConnectionId, mReceiverId, sbuffer,
-                              &transactionId, &postUs);
+  status = mManager->postSend(mReceiverId, sbuffer, &transactionId, &postUs);
   ASSERT_TRUE(status == ResultStatus::OK);
   status = mManager->receive(mReceiverId, transactionId, sbuffer->mId, postUs,
                              &rbuffer);

@@ -34,7 +34,10 @@ namespace android {
 #define MSGSM_OUT_FRM_SZ            (FRGSM_OUT_FRM_SZ * 2)
 
 struct C2SoftGSM : public SimpleC2Component {
-    C2SoftGSM(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftGSM(const char *name, c2_node_id_t id,
+              const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftGSM();
 
     // From SimpleC2Component
@@ -50,6 +53,7 @@ struct C2SoftGSM : public SimpleC2Component {
             uint32_t drainMode,
             const std::shared_ptr<C2BlockPool> &pool) override;
  private:
+    std::shared_ptr<IntfImpl> mIntf;
     gsm mGsm;
     bool mSignalledError;
     bool mSignalledEos;

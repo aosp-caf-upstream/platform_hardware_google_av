@@ -23,6 +23,8 @@
 #include <utils/Log.h>
 
 #include <C2Component.h>
+#include <C2Config.h>
+#include <util/C2InterfaceHelper.h>
 #include <C2Param.h>
 
 #if !defined(UNUSED)
@@ -342,27 +344,17 @@ void C2CompIntfTest::getTestValues(
         const C2FieldSupportedValues &validValueInfos,
         std::vector<TField> *const validValues,
         std::vector<TField> *const invalidValues) {
+    using TStorage = typename _c2_reduce_enum_to_underlying_type<TField>::type;
 
     // The supported values are represented by C2Values. C2Value::Primitive needs to
     // be transformed to a primitive value. This function is one to do that.
     auto prim2Value = [](const C2Value::Primitive &prim) -> TField {
-        if (std::is_same<TField, int32_t>::value) {
-            return prim.i32;
-        } else if (std::is_same<TField, uint32_t>::value) {
-            return prim.u32;
-        } else if (std::is_same<TField, int64_t>::value) {
-            return prim.i64;
-        } else if (std::is_same<TField, uint64_t>::value) {
-            return prim.u64;
-        } else if (std::is_same<TField, float>::value) {
-            return prim.fp;
-        }
-        static_assert(std::is_same<TField, int32_t>::value ||
-                      std::is_same<TField, uint32_t>::value ||
-                      std::is_same<TField, int64_t>::value ||
-                      std::is_same<TField, uint64_t>::value ||
-                      std::is_same<TField, float>::value, "Invalid TField type.");
-        return 0;
+        return (TField)prim.ref<TStorage>();
+        static_assert(std::is_same<TStorage, int32_t>::value ||
+                      std::is_same<TStorage, uint32_t>::value ||
+                      std::is_same<TStorage, int64_t>::value ||
+                      std::is_same<TStorage, uint64_t>::value ||
+                      std::is_same<TStorage, float>::value, "Invalid TField type.");
     };
 
     // The size of validValueInfos is one.
@@ -384,24 +376,24 @@ void C2CompIntfTest::getTestValues(
 
         if (rstep != 0) {
             // Increase linear
-            for (auto v = rmin; v <= rmax; v += rstep) {
+            for (auto v = rmin; v <= rmax; v = TField(v + rstep)) {
                 validValues->emplace_back(v);
             }
             if (rmin > std::numeric_limits<TField>::min()) {
-                invalidValues->emplace_back(rmin - 1);
+                invalidValues->emplace_back(TField(rmin - 1));
             }
             if (rmax < std::numeric_limits<TField>::max()) {
-                invalidValues->emplace_back(rmax + 1);
+                invalidValues->emplace_back(TField(rmax + 1));
             }
             const unsigned int N = validValues->size();
             if (N >= 2) {
                 if (std::is_same<TField, float>::value) {
-                    invalidValues->emplace_back((validValues->at(0) + validValues->at(1)) / 2);
-                    invalidValues->emplace_back((validValues->at(N - 2) + validValues->at(N - 1)) / 2);
+                    invalidValues->emplace_back(TField((validValues->at(0) + validValues->at(1)) / 2));
+                    invalidValues->emplace_back(TField((validValues->at(N - 2) + validValues->at(N - 1)) / 2));
                 } else {
                     if (rstep > 1) {
-                        invalidValues->emplace_back(validValues->at(0) + 1);
-                        invalidValues->emplace_back(validValues->at(N - 1) - 1);
+                        invalidValues->emplace_back(TField(validValues->at(0) + 1));
+                        invalidValues->emplace_back(TField(validValues->at(N - 1) - 1));
                     }
                 }
             }
@@ -420,28 +412,28 @@ void C2CompIntfTest::getTestValues(
             // (num / denom) is not less than 1.
             ASSERT_FALSE(denom == 0);
             ASSERT_LE(denom, num);
-            for (auto v = rmin; v <= rmax; v = v * num / denom) {
+            for (auto v = rmin; v <= rmax; v = TField(v * num / denom)) {
                 validValues->emplace_back(v);
             }
 
             if (rmin > std::numeric_limits<TField>::min()) {
-                invalidValues->emplace_back(rmin - 1);
+                invalidValues->emplace_back(TField(rmin - 1));
             }
             if (rmax < std::numeric_limits<TField>::max()) {
-                invalidValues->emplace_back(rmax + 1);
+                invalidValues->emplace_back(TField(rmax + 1));
             }
 
             const unsigned int N = validValues->size();
             if (N >= 2) {
                 if (std::is_same<TField, float>::value) {
-                    invalidValues->emplace_back((validValues->at(0) + validValues->at(1)) / 2);
-                    invalidValues->emplace_back((validValues->at(N - 2) + validValues->at(N - 1)) / 2);
+                    invalidValues->emplace_back(TField((validValues->at(0) + validValues->at(1)) / 2));
+                    invalidValues->emplace_back(TField((validValues->at(N - 2) + validValues->at(N - 1)) / 2));
                 } else {
                     if (validValues->at(1) - validValues->at(0) > 1) {
-                        invalidValues->emplace_back(validValues->at(0) + 1);
+                        invalidValues->emplace_back(TField(validValues->at(0) + 1));
                     }
                     if (validValues->at(N - 1) - validValues->at(N - 2) > 1) {
-                        invalidValues->emplace_back(validValues->at(N - 1) - 1);
+                        invalidValues->emplace_back(TField(validValues->at(N - 1) - 1));
                     }
                 }
             }
@@ -455,10 +447,10 @@ void C2CompIntfTest::getTestValues(
         auto minv = *std::min_element(validValues->begin(), validValues->end());
         auto maxv = *std::max_element(validValues->begin(), validValues->end());
         if (minv - 1 > std::numeric_limits<TField>::min()) {
-            invalidValues->emplace_back(minv - 1);
+            invalidValues->emplace_back(TField(minv - 1));
         }
         if (maxv + 1 < std::numeric_limits<TField>::max()) {
-            invalidValues->emplace_back(maxv + 1);
+            invalidValues->emplace_back(TField(maxv + 1));
         }
         break;
     }

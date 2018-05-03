@@ -203,8 +203,7 @@ TEST_F(BufferpoolMultiTest, TransferBuffer) {
     status = mManager->allocate(mConnectionId, vecParams, &sbuffer);
     ASSERT_TRUE(status == ResultStatus::OK);
 
-    status = mManager->postSend(mConnectionId, receiverId, sbuffer,
-                               &transactionId, &postUs);
+    status = mManager->postSend(receiverId, sbuffer, &transactionId, &postUs);
     ASSERT_TRUE(status == ResultStatus::OK);
 
     message.data.command = PipeCommand::SEND;

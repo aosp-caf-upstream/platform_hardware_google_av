@@ -17,6 +17,7 @@
 #ifndef ANDROID_HARDWARE_MEDIA_BUFFERPOOL_V1_0_BUFFERPOOLTYPES_H
 #define ANDROID_HARDWARE_MEDIA_BUFFERPOOL_V1_0_BUFFERPOOLTYPES_H
 
+#include <android/hardware/media/bufferpool/1.0/IAccessor.h>
 #include <android/hardware/media/bufferpool/1.0/types.h>
 #include <cutils/native_handle.h>
 #include <fmq/MessageQueue.h>
@@ -29,16 +30,31 @@ namespace media {
 namespace bufferpool {
 
 struct BufferPoolData {
-    uint32_t mId; //BufferId
-    // Handle should be copied to somewhere else, and should be managed there.
+    // For local use, to specify a bufferpool (client connection) for buffers.
+    // Return value from connect#IAccessor(android.hardware.media.bufferpool@1.0).
+    // high 32 bit = pid of IAccessor : low 32 bit = sequence Id for connect
+    int64_t mConnectionId;
+    // BufferId
+    uint32_t mId;
+    // Accessor accosiated to the buffer.
+    wp<V1_0::IAccessor> mAccessor;
+    // mHandle is owned if not null, i.e., it will be closed and deleted in
+    // ~BufferPoolData().
     native_handle_t *mHandle;
 
-    BufferPoolData() : mId(0), mHandle(NULL) {}
+    BufferPoolData() : mConnectionId(0), mId(0), mAccessor(nullptr), mHandle(NULL) {}
 
-    BufferPoolData(uint32_t id, native_handle_t *handle)
-            : mId(id), mHandle(handle) {}
+    BufferPoolData(
+            int64_t connectionId, uint32_t id,
+            wp<V1_0::IAccessor> accessor,
+            native_handle_t *handle)
+            : mConnectionId(connectionId), mId(id), mAccessor(accessor), mHandle(handle) {}
 
     ~BufferPoolData() {
+        if (mHandle) {
+            native_handle_close(mHandle);
+            native_handle_delete(mHandle);
+        }
     }
 };
 

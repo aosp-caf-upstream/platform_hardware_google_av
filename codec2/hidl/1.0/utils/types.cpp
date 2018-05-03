@@ -22,13 +22,13 @@
 
 #include <C2AllocatorIon.h>
 #include <C2AllocatorGralloc.h>
-#include <C2PlatformSupport.h>
 #include <C2BlockInternal.h>
-#include <C2ParamInternal.h>
-#include <C2Param.h>
 #include <C2Buffer.h>
-#include <C2Work.h>
 #include <C2Component.h>
+#include <C2Param.h>
+#include <C2ParamInternal.h>
+#include <C2PlatformSupport.h>
+#include <C2Work.h>
 #include <util/C2ParamUtils.h>
 
 #include <unordered_map>

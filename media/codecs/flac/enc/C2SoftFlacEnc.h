@@ -23,10 +23,6 @@
 
 #include <media/stagefright/foundation/ADebug.h>
 
-// use this symbol to have the first output buffer start with FLAC frame header so a dump of
-// all the output buffers can be opened as a .flac file
-//#define WRITE_FLAC_HEADER_IN_FIRST_BUFFER
-
 #define FLAC_COMPRESSION_LEVEL_MIN     0
 #define FLAC_COMPRESSION_LEVEL_DEFAULT 5
 #define FLAC_COMPRESSION_LEVEL_MAX     8
@@ -39,7 +35,9 @@ namespace android {
 
 class C2SoftFlacEnc : public SimpleC2Component {
 public:
-    C2SoftFlacEnc(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftFlacEnc(const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftFlacEnc();
 
     // From SimpleC2Component
@@ -65,6 +63,7 @@ private:
             const FLAC__byte buffer[], size_t bytes, unsigned samples,
             unsigned current_frame);
 
+    std::shared_ptr<IntfImpl> mIntf;
     const unsigned int kInBlockSize = 1152;
     const unsigned int kMaxNumChannels = 2;
     FLAC__StreamEncoder* mFlacStreamEncoder;
@@ -72,8 +71,6 @@ private:
     std::shared_ptr<C2LinearBlock> mOutputBlock;
     bool mSignalledError;
     bool mSignalledOutputEos;
-    uint32_t mNumChannels;
-    uint32_t mSampleRate;
     uint32_t mCompressionLevel;
     uint32_t mBlockSize;
     bool mIsFirstFrame;
@@ -82,11 +79,9 @@ private:
     // should the data received by the callback be written to the output port
     bool mEncoderWriteData;
     size_t mEncoderReturnedNbBytes;
-#ifdef WRITE_FLAC_HEADER_IN_FIRST_BUFFER
     unsigned mHeaderOffset;
     bool mWroteHeader;
     char mHeader[FLAC_HEADER_SIZE];
-#endif
 
     DISALLOW_EVIL_CONSTRUCTORS(C2SoftFlacEnc);
 };
