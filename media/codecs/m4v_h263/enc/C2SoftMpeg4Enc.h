@@ -25,7 +25,10 @@
 namespace android {
 
 struct C2SoftMpeg4Enc : public SimpleC2Component {
-    C2SoftMpeg4Enc(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftMpeg4Enc(const char* name, c2_node_id_t id,
+                   const std::shared_ptr<IntfImpl>& intfImpl);
 
     // From SimpleC2Component
     c2_status_t onInit() override;
@@ -41,9 +44,12 @@ struct C2SoftMpeg4Enc : public SimpleC2Component {
             const std::shared_ptr<C2BlockPool> &pool) override;
 
 protected:
+
     virtual ~C2SoftMpeg4Enc();
 
 private:
+    std::shared_ptr<IntfImpl> mIntf;
+
     tagvideoEncControls *mHandle;
     tagvideoEncOptions  *mEncParams;
 
@@ -51,10 +57,6 @@ private:
     bool     mSignalledOutputEos;
     bool     mSignalledError;
 
-    uint32_t mWidth;
-    uint32_t mHeight;
-    uint32_t mFramerate;
-    uint32_t mBitrate;
     uint32_t mOutBufferSize;
     // 1: all I-frames, <0: infinite
     int32_t  mKeyFrameInterval;

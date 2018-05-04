@@ -215,14 +215,14 @@ Return<Status> Component::drain(bool withEos) {
 Return<Status> Component::setOutputSurface(
         uint64_t blockPoolId,
         const sp<HGraphicBufferProducer>& surface) {
-    (void) surface;
     std::shared_ptr<C2BlockPool> pool;
     GetCodec2BlockPool(blockPoolId, mComponent, &pool);
-    std::shared_ptr<C2BufferQueueBlockPool> bqPool =
-            std::static_pointer_cast<C2BufferQueueBlockPool>(pool);
-    // TODO : validate if it's really a BQBP.
-    if (bqPool) {
-        bqPool->configureProducer(surface);
+    if (pool && pool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC) {
+        std::shared_ptr<C2BufferQueueBlockPool> bqPool =
+                std::static_pointer_cast<C2BufferQueueBlockPool>(pool);
+        if (bqPool) {
+            bqPool->configureProducer(surface);
+        }
     }
     return Status::OK;
 }

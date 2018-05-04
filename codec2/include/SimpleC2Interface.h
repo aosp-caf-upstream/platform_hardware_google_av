@@ -18,6 +18,7 @@
 #define SIMPLE_C2_INTERFACE_H_
 
 #include <C2Component.h>
+#include <C2Config.h>
 
 namespace android {
 

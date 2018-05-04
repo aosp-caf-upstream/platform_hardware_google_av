@@ -18,8 +18,13 @@
 #define C2_SOFT_VPX_ENC_H__
 
 #include <media/stagefright/foundation/ABase.h>
+#include <media/stagefright/foundation/ADebug.h>
+#include <media/stagefright/foundation/MediaDefs.h>
 
 #include <SimpleC2Component.h>
+#include <C2PlatformSupport.h>
+#include <SimpleInterfaceCommon.h>
+#include <util/C2InterfaceHelper.h>
 
 #include "vpx/vpx_encoder.h"
 #include "vpx/vpx_codec.h"
@@ -66,7 +71,10 @@ typedef enum TemporalPatternType {
 // to 1/1000000
 
 struct C2SoftVpxEnc : public SimpleC2Component {
-    C2SoftVpxEnc(std::shared_ptr<C2ComponentInterface> buildIntf);
+    class IntfImpl;
+
+    C2SoftVpxEnc(const char* name, c2_node_id_t id,
+                 const std::shared_ptr<IntfImpl>& intfImpl);
 
     // From SimpleC2Component
     c2_status_t onInit() override final;
@@ -74,6 +82,7 @@ struct C2SoftVpxEnc : public SimpleC2Component {
     void onReset() override final;
     void onRelease() override final;
     c2_status_t onFlush_sm() override final;
+
     void process(
             const std::unique_ptr<C2Work> &work,
             const std::shared_ptr<C2BlockPool> &pool) override final;
@@ -82,6 +91,7 @@ struct C2SoftVpxEnc : public SimpleC2Component {
             const std::shared_ptr<C2BlockPool> &pool) override final;
 
  protected:
+     std::shared_ptr<IntfImpl> mIntf;
      virtual ~C2SoftVpxEnc();
 
      // Initializes vpx encoder with available settings.
@@ -147,12 +157,6 @@ struct C2SoftVpxEnc : public SimpleC2Component {
      // vpx specific read-only data structure
      // that specifies algorithm interface (e.g. vp8)
      vpx_codec_iface_t* mCodecInterface;
-
-     // width of the input frames
-     uint32_t mWidth;
-
-     // height of the input frames
-     uint32_t mHeight;
 
      // align stride to the power of 2
      int32_t mStrideAlign;
@@ -225,7 +229,99 @@ struct C2SoftVpxEnc : public SimpleC2Component {
      DISALLOW_EVIL_CONSTRUCTORS(C2SoftVpxEnc);
 };
 
+class C2SoftVpxEnc::IntfImpl : public C2InterfaceHelper {
+   public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper>& helper)
+        : C2InterfaceHelper(helper) {
+        setDerivedInstance(this);
+
+        addParameter(
+            DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(
+                    new C2StreamFormatConfig::input(0u, C2FormatVideo))
+                .build());
+
+        addParameter(
+            DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(
+                    new C2StreamFormatConfig::output(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+            DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                    MEDIA_MIMETYPE_VIDEO_RAW))
+                .build());
+
+        addParameter(
+            DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+#ifdef VP9
+                    MEDIA_MIMETYPE_VIDEO_VP9
+#else
+                    MEDIA_MIMETYPE_VIDEO_VP8
+#endif
+                    ))
+                .build());
+
+        addParameter(DefineParam(mUsage, C2_NAME_INPUT_STREAM_USAGE_SETTING)
+                         .withConstValue(new C2StreamUsageTuning::input(
+                             0u, (uint64_t)C2MemoryUsage::CPU_READ))
+                         .build());
+
+        addParameter(
+            DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_SETTING)
+                .withDefault(new C2VideoSizeStreamTuning::input(0u, 320, 240))
+                .withFields({
+                    C2F(mSize, width).inRange(2, 2048, 2),
+                    C2F(mSize, height).inRange(2, 2048, 2),
+                })
+                .withSetter(SizeSetter)
+                .build());
+
+        addParameter(
+            DefineParam(mFrameRate, C2_NAME_STREAM_FRAME_RATE_SETTING)
+                .withDefault(new C2StreamFrameRateInfo::output(0u, 30.))
+                // TODO: More restriction?
+                .withFields({C2F(mFrameRate, value).greaterThan(0.)})
+                .withSetter(
+                    Setter<decltype(*mFrameRate)>::StrictValueWithNoDeps)
+                .build());
+
+        addParameter(
+            DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::output(0u, 64000))
+                .withFields({C2F(mBitrate, value).inRange(1, 40000000)})
+                .withSetter(
+                    Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
+
+    static C2R SizeSetter(bool mayBlock,
+                          C2P<C2VideoSizeStreamTuning::input>& me) {
+        (void)mayBlock;
+        // TODO: maybe apply block limit?
+        return me.F(me.v.width)
+            .validatePossible(me.v.width)
+            .plus(me.F(me.v.height).validatePossible(me.v.height));
+    }
+
+    uint32_t getWidth() const { return mSize->width; }
+    uint32_t getHeight() const { return mSize->height; }
+    float getFrameRate() const { return mFrameRate->value; }
+    uint32_t getBitrate() const { return mBitrate->value; }
+
+   private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamUsageTuning::input> mUsage;
+    std::shared_ptr<C2VideoSizeStreamTuning::input> mSize;
+    std::shared_ptr<C2StreamFrameRateInfo::output> mFrameRate;
+    std::shared_ptr<C2BitrateTuning::output> mBitrate;
+};
+
 }  // namespace android
 
 #endif  // C2_SOFT_VPX_ENC_H__
-

@@ -20,11 +20,12 @@
 #include <gtest/gtest.h>
 
 #define __C2_GENERATE_GLOBAL_VARS__
-#include <util/C2ParamUtils.h>
-#include <C2Config.h>
 #include <C2Component.h>
-#include <unordered_map>
+#include <C2Config.h>
 #include <C2Debug.h>
+#include <C2Enum.h>
+
+#include <unordered_map>
 
 class C2SampleComponentTest : public ::testing::Test {
 };

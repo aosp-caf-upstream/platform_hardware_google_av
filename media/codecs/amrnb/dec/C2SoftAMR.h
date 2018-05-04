@@ -24,7 +24,10 @@
 namespace android {
 
 struct C2SoftAMR : public SimpleC2Component {
-    C2SoftAMR(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftAMR(const char *name, c2_node_id_t id,
+              const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftAMR();
 
     // From SimpleC2Component
@@ -41,12 +44,11 @@ struct C2SoftAMR : public SimpleC2Component {
             const std::shared_ptr<C2BlockPool> &pool) override;
 private:
     enum {
-        kSampleRateNB           = 8000,
-        kSampleRateWB           = 16000,
         kNumSamplesPerFrameNB   = 160,
         kNumSamplesPerFrameWB   = 320,
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
     void *mAmrHandle;
     void *mDecoderBuf;
     int16_t *mDecoderCookie;

@@ -32,7 +32,10 @@ bool parseMp3Header(uint32_t header, size_t *frame_size,
 namespace android {
 
 struct C2SoftMP3 : public SimpleC2Component {
-    C2SoftMP3(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftMP3(const char *name, c2_node_id_t id,
+              const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftMP3();
 
     // From SimpleC2Component
@@ -53,11 +56,10 @@ private:
         kPVMP3DecoderDelay = 529 // samples
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
     tPVMP3DecoderExternal *mConfig;
     void *mDecoderBuf;
 
-    int32_t mNumChannels;
-    int32_t mSamplingRate;
     bool mIsFirst;
     bool mSignalledError;
     bool mSignalledOutputEos;

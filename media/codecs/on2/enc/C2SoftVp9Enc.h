@@ -29,7 +29,8 @@ namespace android {
 //    - tile columns
 //    - frame parallel mode
 struct C2SoftVp9Enc : public C2SoftVpxEnc {
-    C2SoftVp9Enc(const char *name, c2_node_id_t id);
+    C2SoftVp9Enc(const char* name, c2_node_id_t id,
+                 const std::shared_ptr<IntfImpl>& intfImpl);
 
  protected:
     // Populates |mCodecInterface| with codec specific settings.
@@ -56,4 +57,3 @@ struct C2SoftVp9Enc : public C2SoftVpxEnc {
 }  // namespace android
 
 #endif  // C2_SOFT_VP9_ENC_H__
-

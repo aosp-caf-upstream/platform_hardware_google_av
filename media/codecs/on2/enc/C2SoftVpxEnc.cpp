@@ -19,11 +19,6 @@
 #include <utils/Log.h>
 #include <utils/misc.h>
 
-#include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
-
-#include <media/stagefright/foundation/ADebug.h>
-
 #include "C2SoftVpxEnc.h"
 
 #ifndef INT32_MAX
@@ -104,16 +99,15 @@ void ConvertRGBToPlanarYUV(
     }
 }
 
-C2SoftVpxEnc::C2SoftVpxEnc(std::shared_ptr<C2ComponentInterface> buildIntf)
-    : SimpleC2Component(buildIntf),
+C2SoftVpxEnc::C2SoftVpxEnc(const char* name, c2_node_id_t id,
+                           const std::shared_ptr<IntfImpl>& intfImpl)
+    : SimpleC2Component(
+          std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mCodecContext(nullptr),
       mCodecConfiguration(nullptr),
       mCodecInterface(nullptr),
-      mWidth(1080),
-      mHeight(1920),
       mStrideAlign(1),
-      mBitrate(2000000),
-      mFramerate(30),
       mColorFormat(VPX_IMG_FMT_I420),
       mBitrateUpdated(false),
       mBitrateControlMode(VPX_VBR),
@@ -201,8 +195,8 @@ status_t C2SoftVpxEnc::initEncoder() {
         goto CleanUp;
     }
 
-    mCodecConfiguration->g_w = mWidth;
-    mCodecConfiguration->g_h = mHeight;
+    mCodecConfiguration->g_w = mIntf->getWidth();
+    mCodecConfiguration->g_h = mIntf->getHeight();
     mCodecConfiguration->g_threads = getCpuCoreCount();
     mCodecConfiguration->g_error_resilient = mErrorResilience;
 
@@ -211,7 +205,7 @@ status_t C2SoftVpxEnc::initEncoder() {
     mCodecConfiguration->g_timebase.num = 1;
     mCodecConfiguration->g_timebase.den = 1000000;
     // rc_target_bitrate is in kbps, mBitrate in bps
-    mCodecConfiguration->rc_target_bitrate = (mBitrate + 500) / 1000;
+    mCodecConfiguration->rc_target_bitrate = (mIntf->getBitrate() + 500) / 1000;
     mCodecConfiguration->rc_end_usage = mBitrateControlMode;
     // Disable frame drop - not allowed in MediaCodec now.
     mCodecConfiguration->rc_dropframe_thresh = 0;
@@ -333,7 +327,8 @@ status_t C2SoftVpxEnc::initEncoder() {
                                          1);
         if (codec_return == VPX_CODEC_OK) {
             uint32_t rc_max_intra_target =
-                mCodecConfiguration->rc_buf_optimal_sz * (mFramerate >> 1) / 10;
+                mCodecConfiguration->rc_buf_optimal_sz *
+                ((uint32_t)mIntf->getFrameRate() >> 1) / 10;
             // Don't go below 3 times per frame bandwidth.
             if (rc_max_intra_target < 300) {
                 rc_max_intra_target = 300;
@@ -360,11 +355,14 @@ status_t C2SoftVpxEnc::initEncoder() {
         free(mConversionBuffer);
         mConversionBuffer = nullptr;
     }
-    if (((uint64_t)mWidth * mHeight) > ((uint64_t)INT32_MAX / 3)) {
-        ALOGE("b/25812794, Buffer size is too big, width=%d, height=%d.", mWidth, mHeight);
+    if (((uint64_t)mIntf->getWidth() * mIntf->getHeight()) >
+        ((uint64_t)INT32_MAX / 3)) {
+        ALOGE("b/25812794, Buffer size is too big, width=%d, height=%d.",
+              mIntf->getWidth(), mIntf->getHeight());
         goto CleanUp;
     }
-    mConversionBuffer = (uint8_t *)malloc(mWidth * mHeight * 3 / 2);
+    mConversionBuffer =
+        (uint8_t*)malloc(mIntf->getWidth() * mIntf->getHeight() * 3 / 2);
     if (!mConversionBuffer) {
         ALOGE("Allocating conversion buffer failed.");
         goto CleanUp;
@@ -478,10 +476,13 @@ void C2SoftVpxEnc::process(
         work->worklets.front()->output.configUpdate.push_back(std::move(csd));
     }
 
-    const C2ConstGraphicBlock inBuffer = work->input.buffers[0]->data().graphicBlocks().front();
-    if (inBuffer.width() != mWidth || inBuffer.height() != mHeight) {
-        ALOGE("unexpected Input buffer attributes %d(%d) x %d(%d)", inBuffer.width(),
-              mWidth, inBuffer.height(),  mHeight);
+    const C2ConstGraphicBlock inBuffer =
+        work->input.buffers[0]->data().graphicBlocks().front();
+    if (inBuffer.width() != mIntf->getWidth() ||
+        inBuffer.height() != mIntf->getHeight()) {
+        ALOGE("unexpected Input buffer attributes %d(%d) x %d(%d)",
+              inBuffer.width(), mIntf->getWidth(), inBuffer.height(),
+              mIntf->getHeight());
         work->result = C2_BAD_VALUE;
         return;
     }
@@ -496,7 +497,8 @@ void C2SoftVpxEnc::process(
     switch (layout.type) {
         case C2PlanarLayout::TYPE_RGB:
         case C2PlanarLayout::TYPE_RGBA: {
-            ConvertRGBToPlanarYUV(mConversionBuffer, mWidth, mHeight, rView);
+            ConvertRGBToPlanarYUV(mConversionBuffer, mIntf->getWidth(),
+                                  mIntf->getHeight(), rView);
             break;
         }
         default:
@@ -517,17 +519,19 @@ void C2SoftVpxEnc::process(
         frameDuration = (uint32_t)(inputTimeStamp - mLastTimestamp);
     } else {
         // Use default of 30 fps in case of 0 frame rate.
-        uint32_t framerate = mFramerate ?: 30;
+        uint32_t framerate = mIntf->getFrameRate() ?: 30;
         frameDuration = (uint32_t)((uint64_t)1000000 / framerate);
     }
     mLastTimestamp = inputTimeStamp;
 
     uint8_t *source = mConversionBuffer;
     vpx_image_t raw_frame;
-    vpx_img_wrap(&raw_frame, VPX_IMG_FMT_I420, mWidth, mHeight, mStrideAlign, source);
+    vpx_img_wrap(&raw_frame, VPX_IMG_FMT_I420, mIntf->getWidth(),
+                 mIntf->getHeight(), mStrideAlign, source);
 
     if (mBitrateUpdated) {
-        mCodecConfiguration->rc_target_bitrate = (mBitrate + 500) / 1000;
+        mCodecConfiguration->rc_target_bitrate =
+            (mIntf->getBitrate() + 500) / 1000;
         vpx_codec_err_t res = vpx_codec_enc_config_set(mCodecContext,
                                                        mCodecConfiguration);
         if (res != VPX_CODEC_OK) {

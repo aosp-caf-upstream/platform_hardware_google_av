@@ -26,7 +26,10 @@ struct tagvideoDecControls;
 namespace android {
 
 struct C2SoftMpeg4Dec : public SimpleC2Component {
-    C2SoftMpeg4Dec(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftMpeg4Dec(const char* name, c2_node_id_t id,
+                   const std::shared_ptr<IntfImpl>& intfImpl);
     virtual ~C2SoftMpeg4Dec();
 
     // From SimpleC2Component
@@ -51,6 +54,7 @@ struct C2SoftMpeg4Dec : public SimpleC2Component {
     void finishWork(uint64_t index, const std::unique_ptr<C2Work> &work);
     bool handleResChange(const std::unique_ptr<C2Work> &work);
 
+    std::shared_ptr<IntfImpl> mIntf;
     tagvideoDecControls *mDecHandle;
     std::shared_ptr<C2GraphicBlock> mOutBlock;
     uint8_t *mOutputBuffer[kNumOutputBuffers];

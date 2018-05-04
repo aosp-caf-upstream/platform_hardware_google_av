@@ -17,27 +17,11 @@
 #ifndef C2CONFIG_H_
 #define C2CONFIG_H_
 
+#include <C2Enum.h>
 #include <C2ParamDef.h>
 
 /// \defgroup config Component configuration
 /// @{
-
-#ifndef DEFINE_C2_ENUM_VALUE_AUTO_HELPER
-#define DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, ...)
-#define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, type, names, ...)
-#endif
-
-#define C2ENUM(name, type, ...) \
-enum name : type { __VA_ARGS__ }; \
-DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, NULL, __VA_ARGS__)
-
-#define C2ENUM_CUSTOM_PREFIX(name, type, prefix, ...) \
-enum name : type { __VA_ARGS__ }; \
-DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, __VA_ARGS__)
-
-#define C2ENUM_CUSTOM_NAMES(name, type, names, ...) \
-enum name : type { __VA_ARGS__ }; \
-DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, type, names, __VA_ARGS__)
 
 enum C2ParamIndexKind : C2Param::type_index_t {
     /// domain

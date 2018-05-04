@@ -25,7 +25,7 @@ using ::android::base::StringPrintf;
 /* --------------------------------- ReflectorHelper --------------------------------- */
 
 void C2ReflectorHelper::addStructDescriptors(
-        std::vector<C2StructDescriptor> &structs, _C2Tuple<> *) {
+        std::vector<C2StructDescriptor> &structs, _Tuple<> *) {
     std::lock_guard<std::mutex> lock(_mMutex);
     for (C2StructDescriptor &strukt : structs) {
         // TODO: check if structure descriptions conflict with existing ones

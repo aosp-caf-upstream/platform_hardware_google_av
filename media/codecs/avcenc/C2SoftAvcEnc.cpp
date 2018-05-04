@@ -146,9 +146,6 @@ static size_t GetCPUCoreCount() {
 void ConvertRGBToPlanarYUV(
         uint8_t *dstY, size_t dstStride, size_t dstVStride,
         const C2GraphicView &src) {
-    CHECK((src.width() & 1) == 0);
-    CHECK((src.height() & 1) == 0);
-
     uint8_t *dstU = dstY + dstStride * dstVStride;
     uint8_t *dstV = dstU + (dstStride >> 1) * (dstVStride >> 1);
 
@@ -983,9 +980,6 @@ c2_status_t C2SoftAvcEnc::setEncodeArgs(
     }
 
     ALOGV("width = %d, height = %d", input->width(), input->height());
-    if (mIntf->getWidth() != input->width() || mIntf->getHeight() != input->height()) {
-        return C2_BAD_VALUE;
-    }
     const C2PlanarLayout &layout = input->layout();
     uint8_t *yPlane = const_cast<uint8_t *>(input->data()[C2PlanarLayout::PLANE_Y]);
     uint8_t *uPlane = const_cast<uint8_t *>(input->data()[C2PlanarLayout::PLANE_U]);
@@ -998,7 +992,8 @@ c2_status_t C2SoftAvcEnc::setEncodeArgs(
         case C2PlanarLayout::TYPE_RGB:
             // fall-through
         case C2PlanarLayout::TYPE_RGBA: {
-            size_t yPlaneSize = input->width() * input->height();
+            size_t yPlaneSize = mIntf->getWidth() * mIntf->getHeight();
+            ALOGV("yPlaneSize = %zu", yPlaneSize);
             std::unique_ptr<uint8_t[]> freeBuffer;
             if (mFreeConversionBuffers.empty()) {
                 freeBuffer.reset(new uint8_t[yPlaneSize * 3 / 2]);
@@ -1010,9 +1005,9 @@ c2_status_t C2SoftAvcEnc::setEncodeArgs(
             mConversionBuffersInUse.push_back(std::move(freeBuffer));
             uPlane = yPlane + yPlaneSize;
             vPlane = uPlane + yPlaneSize / 4;
-            yStride = input->width();
-            uStride = vStride = input->width() / 2;
-            ConvertRGBToPlanarYUV(yPlane, yStride, input->height(), *input);
+            yStride = mIntf->getWidth();
+            uStride = vStride = yStride / 2;
+            ConvertRGBToPlanarYUV(yPlane, yStride, mIntf->getHeight(), *input);
             break;
         }
         case C2PlanarLayout::TYPE_YUV:

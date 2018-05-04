@@ -113,7 +113,6 @@ struct ClientManager : public IClientManager {
      * Posts a buffer transfer transaction to the buffer pool. Sends a buffer
      * to other remote clients(connection) after this call has been succeeded.
      *
-     * @param connectionId  The id of the sending connection.
      * @param receiverId    The id of the receiving connection.
      * @param buffer        to transfer
      * @param transactionId Id of the transfer transaction.
@@ -124,8 +123,7 @@ struct ClientManager : public IClientManager {
      *         NOT_FOUND when the sending connection was not found.
      *         CRITICAL_ERROR otherwise.
      */
-    ResultStatus postSend(ConnectionId connectionId,
-                          ConnectionId receiverId,
+    ResultStatus postSend(ConnectionId receiverId,
                           const std::shared_ptr<BufferPoolData> &buffer,
                           TransactionId *transactionId,
                           int64_t *timestampUs);
