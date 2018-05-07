@@ -22,6 +22,9 @@
 #include <codec2/hidl/1.0/ComponentStore.h>
 #include <codec2/hidl/1.0/types.h>
 
+#include <C2BqBufferPriv.h>
+#include <C2PlatformSupport.h>
+
 namespace hardware {
 namespace google {
 namespace media {
@@ -210,10 +213,18 @@ Return<Status> Component::drain(bool withEos) {
 }
 
 Return<Status> Component::setOutputSurface(
+        uint64_t blockPoolId,
         const sp<HGraphicBufferProducer>& surface) {
-    // TODO implement
-    (void)surface;
-    return Status::OMITTED;
+    (void) surface;
+    std::shared_ptr<C2BlockPool> pool;
+    GetCodec2BlockPool(blockPoolId, mComponent, &pool);
+    std::shared_ptr<C2BufferQueueBlockPool> bqPool =
+            std::static_pointer_cast<C2BufferQueueBlockPool>(pool);
+    // TODO : validate if it's really a BQBP.
+    if (bqPool) {
+        bqPool->configureProducer(surface);
+    }
+    return Status::OK;
 }
 
 Return<Status> Component::connectToInputSurface(
@@ -241,9 +252,15 @@ Return<Status> Component::disconnectFromInputSurface() {
 Return<void> Component::createBlockPool(
         uint32_t allocatorId,
         createBlockPool_cb _hidl_cb) {
-    // TODO implement
-    (void)allocatorId;
-    _hidl_cb(Status::OMITTED, 0 /* blockPoolId */, nullptr /* configurable */);
+    // TODO: Store created pool to the component.
+    std::shared_ptr<C2BlockPool> pool;
+    c2_status_t c2res = CreateCodec2BlockPool(allocatorId, mComponent, &pool);
+    Status res = static_cast<Status>(c2res);
+    if (c2res == C2_OK) {
+        _hidl_cb(res, pool->getLocalId(), nullptr /* configurable */);
+    } else {
+        _hidl_cb(res, 0 /* blockPoolId */, nullptr /* configurable */);
+    }
     return Void();
 }
 

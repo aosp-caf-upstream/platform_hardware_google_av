@@ -27,9 +27,13 @@
 
 #include <codec2/hidl/1.0/ComponentStore.h>
 #include <hidl/HidlTransportSupport.h>
+#include <binder/ProcessState.h>
 #include <minijail.h>
 
 #include <C2Component.h>
+
+// OmxStore is added for visibility by dumpstate.
+#include <media/stagefright/omx/1.0/OmxStore.h>
 
 // This is created by module "codec2.vendor.base.policy". This can be modified.
 static constexpr char kBaseSeccompPolicyPath[] =
@@ -106,6 +110,10 @@ int main(int /* argc */, char** /* argv */) {
     signal(SIGPIPE, SIG_IGN);
     android::SetUpMinijail(kBaseSeccompPolicyPath, kExtSeccompPolicyPath);
 
+    // vndbinder is needed by BufferQueue.
+    android::ProcessState::initWithDriver("/dev/vndbinder");
+    android::ProcessState::self()->startThreadPool();
+
     // Extra threads may be needed to handle a stacked IPC sequence that
     // contains alternating binder and hwbinder calls. (See b/35283480.)
     android::hardware::configureRpcThreadpool(8, true /* callerWillJoin */);
@@ -137,6 +145,17 @@ int main(int /* argc */, char** /* argv */) {
             } else {
                 ALOGI("Codec2's IComponentStore service created.");
             }
+        }
+    }
+
+    // Register IOmxStore service.
+    {
+        using namespace ::android::hardware::media::omx::V1_0;
+        android::sp<IOmxStore> omxStore = new implementation::OmxStore();
+        if (omxStore == nullptr) {
+            ALOGE("Cannot create IOmxStore HAL service.");
+        } else if (omxStore->registerAsService() != android::OK) {
+            ALOGE("Cannot register IOmxStore HAL service.");
         }
     }
 

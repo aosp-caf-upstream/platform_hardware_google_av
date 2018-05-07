@@ -21,9 +21,9 @@
 #include <C2AllocatorIon.h>
 #include <C2Buffer.h>
 #include <C2PlatformSupport.h>
-#include <ClientManager.h>
 #include <android-base/logging.h>
 #include <binder/ProcessState.h>
+#include <bufferpool/ClientManager.h>
 #include <hidl/HidlSupport.h>
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/LegacySupport.h>
@@ -43,6 +43,7 @@ using android::hardware::media::bufferpool::V1_0::implementation::BufferId;
 using android::hardware::media::bufferpool::V1_0::implementation::ClientManager;
 using android::hardware::media::bufferpool::V1_0::implementation::ConnectionId;
 using android::hardware::media::bufferpool::V1_0::implementation::TransactionId;
+using android::hardware::media::bufferpool::BufferPoolData;
 
 namespace {
 
@@ -106,7 +107,7 @@ TEST_F(BufferpoolSingleTest, AllocateBuffer) {
   std::vector<uint8_t> vecParams;
   getVtsAllocatorParams(&vecParams);
 
-  std::shared_ptr<_C2BlockPoolData> buffer[kNumAllocationTest];
+  std::shared_ptr<BufferPoolData> buffer[kNumAllocationTest];
   for (int i = 0; i < kNumAllocationTest; ++i) {
     status = mManager->allocate(mConnectionId, vecParams, &buffer[i]);
     ASSERT_TRUE(status == ResultStatus::OK);
@@ -128,7 +129,7 @@ TEST_F(BufferpoolSingleTest, RecycleBuffer) {
 
   BufferId bid[kNumRecycleTest];
   for (int i = 0; i < kNumRecycleTest; ++i) {
-    std::shared_ptr<_C2BlockPoolData> buffer;
+    std::shared_ptr<BufferPoolData> buffer;
     status = mManager->allocate(mConnectionId, vecParams, &buffer);
     ASSERT_TRUE(status == ResultStatus::OK);
     bid[i] = buffer->mId;
@@ -145,7 +146,7 @@ TEST_F(BufferpoolSingleTest, TransferBuffer) {
   ResultStatus status;
   std::vector<uint8_t> vecParams;
   getVtsAllocatorParams(&vecParams);
-  std::shared_ptr<_C2BlockPoolData> sbuffer, rbuffer;
+  std::shared_ptr<BufferPoolData> sbuffer, rbuffer;
 
   TransactionId transactionId;
   int64_t postUs;

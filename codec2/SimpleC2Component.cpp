@@ -300,7 +300,9 @@ void SimpleC2Component::finish(
     if (work) {
         fillWork(work);
         Mutexed<ExecState>::Locked state(mExecState);
-        state->mListener->onWorkDone_nb(shared_from_this(), vec(work));
+        std::shared_ptr<C2Component::Listener> listener = state->mListener;
+        state.unlock();
+        listener->onWorkDone_nb(shared_from_this(), vec(work));
         ALOGV("returning pending work");
     }
 }
@@ -354,8 +356,9 @@ void SimpleC2Component::processQueue() {
                 return err;
             }
             if (outputFormat.value == C2FormatVideo) {
+                // TODO: PLATFORM_START is temporary.
                 err = GetCodec2BlockPool(
-                        C2BlockPool::BASIC_GRAPHIC,
+                        C2BlockPool::PLATFORM_START,
                         shared_from_this(), &mOutputBlockPool);
             } else {
                 err = CreateCodec2BlockPool(
@@ -369,7 +372,9 @@ void SimpleC2Component::processQueue() {
         }();
         if (err != C2_OK) {
             Mutexed<ExecState>::Locked state(mExecState);
-            state->mListener->onError_nb(shared_from_this(), err);
+            std::shared_ptr<C2Component::Listener> listener = state->mListener;
+            state.unlock();
+            listener->onError_nb(shared_from_this(), err);
             return;
         }
     }
@@ -378,7 +383,9 @@ void SimpleC2Component::processQueue() {
         c2_status_t err = drain(drainMode, mOutputBlockPool);
         if (err != C2_OK) {
             Mutexed<ExecState>::Locked state(mExecState);
-            state->mListener->onError_nb(shared_from_this(), err);
+            std::shared_ptr<C2Component::Listener> listener = state->mListener;
+            state.unlock();
+            listener->onError_nb(shared_from_this(), err);
         }
         return;
     }
@@ -394,7 +401,9 @@ void SimpleC2Component::processQueue() {
             queue.unlock();
             {
                 Mutexed<ExecState>::Locked state(mExecState);
-                state->mListener->onWorkDone_nb(shared_from_this(), vec(work));
+                std::shared_ptr<C2Component::Listener> listener = state->mListener;
+                state.unlock();
+                listener->onWorkDone_nb(shared_from_this(), vec(work));
             }
             queue.lock();
             return;
@@ -403,7 +412,9 @@ void SimpleC2Component::processQueue() {
     if (work->workletsProcessed != 0u) {
         Mutexed<ExecState>::Locked state(mExecState);
         ALOGV("returning this work");
-        state->mListener->onWorkDone_nb(shared_from_this(), vec(work));
+        std::shared_ptr<C2Component::Listener> listener = state->mListener;
+        state.unlock();
+        listener->onWorkDone_nb(shared_from_this(), vec(work));
     } else {
         ALOGV("queue pending work");
         std::unique_ptr<C2Work> unexpected;
@@ -420,7 +431,9 @@ void SimpleC2Component::processQueue() {
             ALOGD("unexpected pending work");
             unexpected->result = C2_CORRUPTED;
             Mutexed<ExecState>::Locked state(mExecState);
-            state->mListener->onWorkDone_nb(shared_from_this(), vec(unexpected));
+            std::shared_ptr<C2Component::Listener> listener = state->mListener;
+            state.unlock();
+            listener->onWorkDone_nb(shared_from_this(), vec(unexpected));
         }
     }
 }
@@ -437,7 +450,7 @@ std::shared_ptr<C2Buffer> SimpleC2Component::createLinearBuffer(
 
 std::shared_ptr<C2Buffer> SimpleC2Component::createGraphicBuffer(
         const std::shared_ptr<C2GraphicBlock> &block) {
-    return createGraphicBuffer(block, C2Rect(0, 0, block->width(), block->height()));
+    return createGraphicBuffer(block, C2Rect(block->width(), block->height()));
 }
 
 std::shared_ptr<C2Buffer> SimpleC2Component::createGraphicBuffer(

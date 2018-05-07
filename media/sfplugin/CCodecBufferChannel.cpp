@@ -24,6 +24,7 @@
 #include <C2AllocatorGralloc.h>
 #include <C2PlatformSupport.h>
 #include <C2BlockInternal.h>
+#include <C2Config.h>
 
 #include <android/hardware/cas/native/1.0/IDescrambler.h>
 #include <binder/MemoryDealer.h>
@@ -174,6 +175,27 @@ public:
 
 private:
     DISALLOW_EVIL_CONSTRUCTORS(OutputBuffers);
+};
+
+class CCodecBufferChannel::OutputBufferQueue {
+public:
+    OutputBufferQueue() : mIgbp(nullptr), mIgbpId(0) {}
+    bool isNewIgbp(sp<IGraphicBufferProducer> igbp) {
+        if (!igbp || igbp == mIgbp) return false;
+        mIgbp = igbp;
+        mIgbp->getUniqueId(&mIgbpId);
+        mIgbp->setGenerationNumber(0);
+        mIgbp->setMaxDequeuedBufferCount(16); // TODO: tune
+        return true;
+    }
+
+    bool isNewIgbpId(uint64_t igbpId) {
+        return igbpId != mIgbpId;
+    }
+
+private:
+    sp<IGraphicBufferProducer> mIgbp;
+    uint64_t mIgbpId;
 };
 
 namespace {
@@ -557,9 +579,11 @@ public:
     using CCodecBufferChannel::InputBuffers::InputBuffers;
 
     bool requestNewBuffer(size_t *index, sp<MediaCodecBuffer> *buffer) override {
+        int32_t capacity = kLinearBufferSize;
+        (void)mFormat->findInt32(C2_NAME_STREAM_MAX_BUFFER_SIZE_SETTING, &capacity);
         // TODO: proper max input size
         // TODO: read usage from intf
-        sp<Codec2Buffer> newBuffer = alloc(kLinearBufferSize);
+        sp<Codec2Buffer> newBuffer = alloc((size_t)capacity);
         if (newBuffer == nullptr) {
             return false;
         }
@@ -1015,7 +1039,8 @@ CCodecBufferChannel::CCodecBufferChannel(
     : mHeapSeqNum(-1),
       mOnError(onError),
       mFrameIndex(0u),
-      mFirstValidFrameIndex(0u) {
+      mFirstValidFrameIndex(0u),
+      mOutputBufferQueue(new OutputBufferQueue()) {
 }
 
 CCodecBufferChannel::~CCodecBufferChannel() {
@@ -1207,6 +1232,15 @@ status_t CCodecBufferChannel::renderOutputBuffer(
         ALOGE("no surface");
         return OK;
     }
+    sp<IGraphicBufferProducer> igbp = output->surface->getIGraphicBufferProducer();
+    if (mOutputBufferQueue->isNewIgbp(igbp)) {
+        sp<HGraphicBufferProducer> higbp = igbp->getHalInterface();
+        if (!higbp) {
+            higbp = new TWGraphicBufferProducer<HGraphicBufferProducer>(igbp);
+        }
+        // TODO: use id of block pool which is crated from component
+        mComponent->setOutputSurface(C2BlockPool::PLATFORM_START, higbp);
+    }
 
     std::vector<C2ConstGraphicBlock> blocks = c2Buffer->data().graphicBlocks();
     if (blocks.size() != 1u) {
@@ -1221,50 +1255,54 @@ status_t CCodecBufferChannel::renderOutputBuffer(
     uint32_t format;
     uint64_t usage;
     uint32_t stride;
+    uint64_t igbp_id;
+    int32_t igbp_slot;
     _UnwrapNativeCodec2GrallocMetadata(
-            block.handle(), &width, &height, &format, &usage, &stride);
+            block.handle(), &width, &height, &format, &usage, &stride,
+            &igbp_id, (uint32_t *)&igbp_slot);
     ALOGV("attaching buffer (%u*%u): (%u*%u, fmt %#x, usage %#llx, stride %u)",
             block.width(),
             block.height(),
             width, height, format, (long long)usage, stride);
 
-    sp<GraphicBuffer> graphicBuffer(new GraphicBuffer(
-            grallocHandle,
-            GraphicBuffer::CLONE_HANDLE,
-            width, height, format, 1, usage, stride));
+    status_t result = OK;
+    if (mOutputBufferQueue->isNewIgbpId(igbp_id)) {
+        sp<GraphicBuffer> graphicBuffer(new GraphicBuffer(
+                grallocHandle,
+                GraphicBuffer::CLONE_HANDLE,
+                width, height, format, 1, usage, stride));
+        // TODO: detach?
+        graphicBuffer->setGenerationNumber(0);
+        result = igbp->attachBuffer(&igbp_slot, graphicBuffer);
+        if (result != OK) {
+            native_handle_delete(grallocHandle);
+            ALOGI("attachBuffer failed: %d", result);
+            return result;
+        }
+        ALOGV("attach buffer from %" PRIu64 " : %d", igbp_id, igbp_slot);
+    } else {
+        ALOGV("dequeued buffer arrived %" PRIu64 " %d", igbp_id, igbp_slot);
+    }
     native_handle_delete(grallocHandle);
 
-    status_t result = output->surface->attachBuffer(graphicBuffer.get());
-    if (result != OK) {
-        ALOGE("attachBuffer failed: %d", result);
-        return result;
-    }
-
-    ALOGV("crop: %u,%u .. %u,%u",
-          block.crop().left, block.crop().top,
-          block.crop().width, block.crop().height);
-    android_native_rect_t cropRect = {
-        (int32_t)block.crop().left, (int32_t)block.crop().top,
-        (int32_t)block.crop().right(), (int32_t)block.crop().bottom()
-    };
-    result = native_window_set_crop(output->surface.get(), &cropRect);
-
-    result = native_window_set_buffers_timestamp(output->surface.get(), timestampNs);
-    ALOGW_IF(result != OK, "failed to set buffer timestamp: %d", result);
-
-    // TODO: fix after C2Fence implementation
-#if 0
-    const C2Fence &fence = blocks.front().fence();
-    result = ((ANativeWindow *)output->surface.get())->queueBuffer(
-            output->surface.get(), graphicBuffer.get(), fence.valid() ? fence.fd() : -1);
-#else
-    result = ((ANativeWindow *)output->surface.get())->queueBuffer(
-            output->surface.get(), graphicBuffer.get(), -1);
-#endif
+    // TODO
+    // revisit this after C2Fence implementation.
+    // apply dataspace and scaling mode (getting scaling mode from native_window is not possible.)
+    android::IGraphicBufferProducer::QueueBufferInput qbi(
+            timestampNs,
+            false,
+            HAL_DATASPACE_UNKNOWN,
+            Rect(blocks.front().width(), blocks.front().height()),
+            NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW,
+            0,
+            Fence::NO_FENCE, 0);
+    android::IGraphicBufferProducer::QueueBufferOutput qbo;
+    result = igbp->queueBuffer(igbp_slot, qbi, &qbo);
     if (result != OK) {
         ALOGE("queueBuffer failed: %d", result);
         return result;
     }
+    ALOGV("queue buffer successful");
 
     // XXX: Hack to keep C2Buffers unreleased until the consumer is done
     //      reading the content. Eventually IGBP-based C2BlockPool should handle
@@ -1580,6 +1618,7 @@ void CCodecBufferChannel::onWorkDone(const std::unique_ptr<C2Work> &work) {
 status_t CCodecBufferChannel::setSurface(const sp<Surface> &newSurface) {
     if (newSurface != nullptr) {
         newSurface->setScalingMode(NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
+        newSurface->setMaxDequeuedBufferCount(kMinBufferArraySize);
     }
 
     Mutexed<OutputSurface>::Locked output(mOutputSurface);

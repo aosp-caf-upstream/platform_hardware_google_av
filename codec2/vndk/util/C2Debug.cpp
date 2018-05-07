@@ -181,6 +181,34 @@ template std::ostream& operator<<(std::ostream& os, const C2SupportedRange<uint6
 template std::ostream& operator<<(std::ostream& os, const C2SupportedRange<float> &i);
 
 template<typename T>
+std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<T> &i) {
+    os << "Flags[";
+    if (!i.isEmpty()) {
+        os << "min=";
+        _C2FieldValueHelper<T>::put(os, i.min());
+    }
+    bool comma = false;
+    for (const T &v : i.flags()) {
+        if (comma) {
+            os << ", ";
+        }
+        _C2FieldValueHelper<T>::put(os, v);
+        comma = true;
+    }
+    os << "]";
+    return os;
+}
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<char> &i);
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<uint8_t> &i);
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<int32_t> &i);
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<uint32_t> &i);
+//template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<c2_cntr32_t> &i);
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<int64_t> &i);
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<uint64_t> &i);
+//template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<c2_cntr64_t> &i);
+template std::ostream& operator<<(std::ostream& os, const C2SupportedFlags<float> &i);
+
+template<typename T>
 std::ostream& operator<<(std::ostream& os, const C2SupportedValueSet<T> &i) {
     os << "Values[";
     bool comma = false;
@@ -213,6 +241,7 @@ private:
     C2FieldSupportedValues::type_t _mType;
     C2SupportedRange<ValueType> _mRange;
     C2SupportedValueSet<ValueType> _mValues;
+    C2SupportedFlags<ValueType> _mFlags;
 
 public:
 //    friend std::ostream& operator<< <T>(std::ostream& os, const C2FieldSupportedValuesHelper<T>::Impl &i);
@@ -226,6 +255,8 @@ std::ostream& C2FieldSupportedValuesHelper<T>::Impl::streamOut(std::ostream& os)
         os << _mRange;
     } else if (_mType == C2FieldSupportedValues::VALUES) {
         os << _mValues;
+    } else if (_mType == C2FieldSupportedValues::FLAGS) {
+        os << _mFlags;
     } else {
         os << "Unknown FSV type: " << (uint32_t)_mType;
     }

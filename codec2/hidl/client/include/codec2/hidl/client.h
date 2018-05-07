@@ -23,8 +23,10 @@
 #include <C2Param.h>
 #include <C2.h>
 
+#include <hidl/HidlSupport.h>
 #include <utils/StrongPointer.h>
 
+#include <map>
 #include <memory>
 #include <mutex>
 
@@ -193,13 +195,13 @@ struct Codec2Client : public Codec2ConfigurableClient {
     Codec2Client(const sp<Base>& base);
 
 protected:
+    Base* base() const;
+
     mutable std::mutex mMutex;
     mutable bool mListed;
     mutable std::vector<C2Component::Traits> mTraitsList;
     mutable std::vector<std::unique_ptr<std::vector<std::string>>>
             mAliasesBuffer;
-
-    Base* base() const;
 };
 
 struct Codec2Client::Listener {
@@ -216,6 +218,9 @@ struct Codec2Client::Listener {
     virtual void onError(
             const std::weak_ptr<Component>& comp,
             uint32_t errorCode) = 0;
+
+    virtual void onDeath(
+            const std::weak_ptr<Component>& comp) = 0;
 
     virtual ~Listener();
 
@@ -253,7 +258,9 @@ struct Codec2Client::Component : public Codec2Client::Configurable {
             IGraphicBufferSource IGraphicBufferSource;
 
     // Output surface
-    c2_status_t setOutputSurface(const sp<IGraphicBufferProducer>& surface);
+    c2_status_t setOutputSurface(
+            uint64_t blockPoolId,
+            const sp<IGraphicBufferProducer>& surface);
 
     // Input surface
     c2_status_t connectToInputSurface(
@@ -274,11 +281,21 @@ struct Codec2Client::Component : public Codec2Client::Configurable {
             C2PlatformAllocatorStore::id_t allocatorId,
             std::shared_ptr<C2BlockPool>* pool) const;
 
+    void handleOnWorkDone(const std::vector<uint64_t> &inputDone);
+
     // base cannot be null.
     Component(const sp<Base>& base);
 
 protected:
+    mutable std::mutex mInputBuffersMutex;
+    mutable std::map<uint64_t, std::vector<std::shared_ptr<C2Buffer>>> mInputBuffers;
+
     Base* base() const;
+
+    static c2_status_t setDeathListener(
+            const std::shared_ptr<Component>& component,
+            const std::shared_ptr<Listener>& listener);
+    sp<::android::hardware::hidl_death_recipient> mDeathRecipient;
 
     friend struct Codec2Client;
 };
@@ -306,10 +323,10 @@ public:
     InputSurface(const sp<Base>& base);
 
 protected:
-    sp<Base> mBase;
-    sp<IGraphicBufferProducer> mGraphicBufferProducer;
-
     Base* base() const;
+    sp<Base> mBase;
+
+    sp<IGraphicBufferProducer> mGraphicBufferProducer;
 
     friend struct Codec2Client;
     friend struct Component;
@@ -325,9 +342,8 @@ struct Codec2Client::InputSurfaceConnection {
     InputSurfaceConnection(const sp<Base>& base);
 
 protected:
-    sp<Base> mBase;
-
     Base* base() const;
+    sp<Base> mBase;
 
     friend struct Codec2Client::InputSurface;
 };

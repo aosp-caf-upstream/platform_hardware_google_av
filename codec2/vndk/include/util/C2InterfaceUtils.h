@@ -21,6 +21,7 @@
 #include <C2Work.h>
 
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <type_traits>
 
@@ -334,6 +335,138 @@ private:
 };
 
 /**
+ * Ordered supported flag set for a field of a given type.
+ */
+template<typename T>
+class C2SupportedFlags {
+    typedef typename _C2FieldValueHelper<T>::ValueType ValueType;
+
+public:
+    /**
+     * Constructs an empty flag set.
+     *
+     * \note This is a specializated supported flags representation that is only used for
+     * this object - it is equivalent to the EMPTY type in C2FieldSupportedValues.
+     */
+    static inline C2SupportedFlags<T> None() {
+        return C2SupportedFlags(std::initializer_list<C2Value::Primitive>());
+    }
+
+    /**
+     * Constructs a flags set of given flags.
+     *
+     * \param flags the ordered set of flags as an initializer list.
+     * \param min minimum set of flags to be set.
+     */
+    static inline C2SupportedFlags<T> Flags(const std::initializer_list<T> flags, T min = T(0)) {
+        return C2SupportedFlags(min, flags);
+    }
+
+    /**
+     * Constructs a flags set of given flags.
+     *
+     * \param flags the ordered set of flags.
+     * \param min minimum set of flags to be set.
+     */
+    static inline C2SupportedFlags<T> Flags(const std::vector<T> &flags, T min = T(0)) {
+        return C2SupportedFlags(min, flags);
+    }
+
+    /**
+     * Constructs a flag set from a generic C2FieldSupportedValues object. This will be an empty
+     * set if the supported values are not of FLAGS type.
+     *
+     * \param values the supported values object
+     */
+    C2SupportedFlags<T>(const C2FieldSupportedValues &values) {
+        if (values.type == C2FieldSupportedValues::FLAGS) {
+            _mValues.insert(_mValues.end(), values.values.begin(), values.values.end());
+        }
+    }
+
+    /**
+     * Returns whether this set is empty.
+     */
+    constexpr bool isEmpty() const {
+        return _mValues.empty();
+    }
+
+    /**
+     * Returns whether a value is part of this set.
+     *
+     * \param value the value to check.
+     */
+    bool contains(T value) const;
+
+    /**
+     * Returns a new flag set that is the intersection of this set and another.
+     *
+     * \param limit the other value set
+     */
+    C2SupportedFlags<T> limitedTo(const C2SupportedFlags<T> &limit) const;
+
+    /**
+     * Converts this object to a C2FieldSupportedValues object.
+     */
+    operator C2FieldSupportedValues() const {
+        return C2FieldSupportedValues(!isEmpty() /* flags */, _mValues);
+    }
+
+    /**
+     * Returns the ordered set of flags of this object.
+     */
+    const std::vector<T> flags() const;
+
+    /**
+     * Returns the minimum set of flags for this object.
+     */
+    T min() const;
+
+    /**
+     * Clears this supported value set.
+     */
+    inline void clear() {
+        _mValues.clear();
+    }
+
+private:
+    /**
+     * Constructs a flag set directly from an internal representation.
+     *
+     * \param values a vector containing the minimum flag set followed by the set of flags
+     */
+    C2SupportedFlags(std::vector<C2Value::Primitive> &&values)
+        : _mValues(values) {
+    }
+
+    /**
+     * Constructs a flag set from a set of flags and a minimum flag set.
+     *
+     * \param flags the set
+     */
+    C2SupportedFlags(T min, const std::vector<T> &flags) {
+        _mValues.emplace_back(min);
+        for (T elem : flags) {
+            _mValues.emplace_back(elem);
+        }
+    }
+
+    /**
+     * Constructs a flag set from a set of initializer list values and a minimum flag set
+     *
+     * \param flags the set
+     */
+    C2SupportedFlags(T min, const std::initializer_list<T> flags) {
+        _mValues.emplace_back(min);
+        for (T elem : flags) {
+            _mValues.emplace_back(elem);
+        }
+    }
+
+    std::vector<C2Value::Primitive> _mValues; ///< the minimum flag set followed by the set of flags
+};
+
+/**
  * Ordered supported value set for a field of a given type.
  */
 template<typename T>
@@ -408,6 +541,13 @@ public:
      * \param limit the other range
      */
     C2SupportedValueSet<T> limitedTo(const C2SupportedRange<T> &limit) const;
+
+    /**
+     * Returns a new value set that is the intersection of this set and a flag set.
+     *
+     * \param limit the other flag set
+     */
+    C2SupportedValueSet<T> limitedTo(const C2SupportedFlags<T> &limit) const;
 
     /**
      * Converts this object to a C2FieldSupportedValues object.
@@ -618,6 +758,22 @@ public:
         return limitTo(C2SupportedValueSet<T>::OneOf(values));
     }
 
+    /**
+     * Restrict (and thus define) the supported values to flags in |flags| with at least |min|
+     * set.
+     */
+    C2ParamFieldValuesBuilder<T> &flags(const std::vector<T> &flags, T min = T(0)) {
+        return limitTo(C2SupportedFlags<T>::Flags(flags, min));
+    }
+
+    /**
+     * Restrict (and thus define) the supported values to flags in |values| with at least |min|
+     * set.
+     */
+    C2ParamFieldValuesBuilder<T> &flags(const std::initializer_list<T> flags, T min = T(0)) {
+        return limitTo(C2SupportedFlags<T>::Flags(flags, min));
+    }
+
     virtual ~C2ParamFieldValuesBuilder();
 
     // support copy constructor/operator
@@ -629,6 +785,11 @@ private:
      * Restrict (and thus define) the supported values to a value set.
      */
     C2ParamFieldValuesBuilder<T> &limitTo(const C2SupportedValueSet<T> &limit);
+
+    /**
+     * Restrict (and thus define) the supported values to a value set.
+     */
+    C2ParamFieldValuesBuilder<T> &limitTo(const C2SupportedFlags<T> &limit);
 
     /**
      * Restrict (and thus define) the supported values to a range.
@@ -769,6 +930,196 @@ private:
      * Vector of individual setting result details.
      */
     std::vector<std::unique_ptr<C2SettingResult>> _mResults;
+};
+
+/**
+ * Utility class to enumerate fields of parameters.
+ */
+struct C2FieldUtils {
+    struct _Inspector;
+
+    /**
+     * An extended field descriptor object with structural information (lineage back to the root of
+     * the param).
+     */
+    struct Info {
+        typedef C2FieldDescriptor::type_t type_t; ///< field type
+        typedef C2FieldDescriptor::NamedValuesType NamedValuesType; ///< named values list type
+
+        /// returns the name of the field
+        C2String name() const;
+
+        /// returns the type of this field
+        type_t type() const;
+
+        /**
+         * Returns the defined name-value pairings for this field. The returned reference is
+         * only valid during the validity of this object
+         */
+        const NamedValuesType &namedValues() const;
+
+        /**
+         * The index of this field. E.g. param.field or param.field[0] has an index of 0, and
+         * param.struct[2].field[3] has an index of 3.
+         */
+        size_t index() const;
+
+        /// returns the length of the field in case it is an array. Returns 0 for
+        /// T[] arrays if this info comes from a C2Param::Index object, and the currently used
+        /// extent if it comes from a C2Param object. Returns 1 for T[1] arrays as well as if the
+        /// field is not an array.
+        size_t extent() const;
+
+        /**
+         * The (structural) depth of this field. E.g. param.field or param.field[0] has a depth of
+         *  0, and param.struct.field or param.struct[0].field[0] has a depth of 1.
+         */
+        size_t depth() const;
+
+        /**
+         * Returns the offset of this field in the parameter in bytes.
+         */
+        size_t offset() const;
+
+        /**
+         * Returns the size of this field in bytes.
+         */
+        size_t size() const;
+
+        /**
+         * The offset of this field's array. E.g. for param.struct[2].field[3] this is the offset
+         * of its smallest sibling: param.struct[2].field[0].
+         */
+        size_t arrayOffset() const;
+
+        /**
+         * Returns the size of this field's array. This is equivalent to extent() * size()
+         */
+        size_t arraySize() const;
+
+        /**
+         * The offset of the base field. The base field is a cousin of the current field where
+         * all indices are 0. E.g. the the base field for param.struct[2].field[3] is
+         * param.struct[0].field[0]. Base fields are used to specify supported values for
+         * all cousin fields.
+         */
+        size_t baseFieldOffset() const;
+
+        /**
+         * Returns whether this field is an arithmetic (integral, counter or float) field.
+         */
+        bool isArithmetic() const;
+
+        /**
+         * Returns whether this field can have a flexible extent. extent() returns the current
+         * extent.
+         */
+        bool isFlexible() const;
+
+        /// returns whether this info is valid
+        inline bool isValid() const { return _mImpl != nullptr; }
+
+        /// returns the info for the parent of this field, or an invalid Info object if it has no
+        /// parents
+        Info parent() const;
+
+        /// returns whether this info is valid
+        inline operator bool() const { return isValid(); }
+
+        struct Impl;
+        Info(std::shared_ptr<Impl>);
+
+    private:
+        std::shared_ptr<Impl> _mImpl;
+        friend struct _Inspector;
+    };
+
+    /**
+     * An (input) iterator object over fields using Info objects.
+     */
+    struct Iterator {
+        typedef Info const value_type;
+        typedef ptrdiff_t difference_type;
+        typedef Info const * pointer;
+        typedef Info const reference;
+        typedef std::input_iterator_tag iterator_category;
+
+        /// return Info at current position
+        virtual reference operator*() const;
+
+        /// move to the next field
+        virtual Iterator& operator++();
+
+        virtual bool operator==(const Iterator &) const;
+        inline bool operator!=(const Iterator &other) const { return !operator==(other); }
+
+        virtual ~Iterator() = default;
+
+        struct Impl;
+        Iterator(std::shared_ptr<Impl>);
+
+    protected:
+        std::shared_ptr<Impl> mImpl;
+    };
+
+    /**
+     * An (input) iterable object representing a list of fields.
+     */
+    struct List {
+        /// returns an iterator to the beginning of the list
+        virtual Iterator begin() const;
+
+        /// returns an iterator to the end of the list
+        virtual Iterator end() const;
+
+        virtual ~List() = default;
+
+        struct Impl;
+        List(std::shared_ptr<Impl>);
+
+    protected:
+        std::shared_ptr<Impl> mImpl;
+    };
+
+    /**
+     * Enumerates all (base) fields at index 0 of the parameter. The order of iteration is the
+     * following:
+     *   Fields of a structure are enumerated in field order. However, sub-fields of a structure
+     *   are enumerated directly after the structure field, and prior to sibling fields.
+     *
+     * In essence the order of enumeration is first by increasing offset, then by decreasing size.
+     *
+     * \param param parameter to enumerate its fields
+     * \param reflector parameter reflector used for enumeration
+     *
+     * \return an iterable object
+     */
+    static List enumerateFields(
+            const C2Param &param,
+            const std::shared_ptr<C2ParamReflector> &reflector);
+
+    /**
+     * Enumerates all cousin fields up to depth - level for a field. If level is 0, it enumerates
+     * only the field. For level 1, it enumerates all fields in its current array (which may be
+     * itself if extent is 1). The order of iteration is by increasing field offset.
+     */
+    static List enumerateCousins(
+            const Info &field,
+            uint32_t level = ~0);
+
+    /**
+     * Locates the field in a parameter and returns a list of 2 elements - the most-specific field
+     * array of the parameter that contains the entire field. If the field is not a valid field
+     * specifier for this parameter (e.g. it is outside the bounds of the parameter), it returns
+     * an empty list.
+     */
+    static std::vector<Info> locateField(
+            const C2Param &param, const _C2FieldId &field,
+            const std::shared_ptr<C2ParamReflector> &reflector);
+
+    static std::vector<Info> locateField(
+            const C2ParamField &pf, const std::shared_ptr<C2ParamReflector> &reflector);
+
 };
 
 #include <util/C2Debug-interface.h>

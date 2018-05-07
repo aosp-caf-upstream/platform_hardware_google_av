@@ -27,7 +27,9 @@ namespace android {
 
 class C2SoftAacEnc : public SimpleC2Component {
 public:
-    C2SoftAacEnc(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftAacEnc(const char *name, c2_node_id_t id, const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftAacEnc();
 
     // From SimpleC2Component
@@ -44,11 +46,10 @@ public:
             const std::shared_ptr<C2BlockPool> &pool) override;
 
 private:
+    std::shared_ptr<IntfImpl> mIntf;
+
     HANDLE_AACENCODER mAACEncoder;
 
-    uint32_t mNumChannels;
-    uint32_t mSampleRate;
-    uint32_t mBitRate;
     int32_t mSBRMode;
     int32_t mSBRRatio;
     AUDIO_OBJECT_TYPE mAACProfile;

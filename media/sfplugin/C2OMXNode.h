@@ -85,6 +85,7 @@ private:
     std::atomic_uint64_t mFrameIndex;
     uint32_t mWidth;
     uint32_t mHeight;
+    uint64_t mUsage;
 };
 
 }  // namespace android

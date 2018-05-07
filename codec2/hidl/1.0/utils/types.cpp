@@ -686,6 +686,7 @@ Status objcpy(FrameData* d, const C2FrameData& s,
     for (const std::shared_ptr<C2Buffer>& sBuffer : s.buffers) {
         Buffer& dBuffer = d->buffers[i++];
         if (!sBuffer) {
+            // TODO: this should be okay
             ALOGE("Null C2Buffer");
             return Status::BAD_VALUE;
         }
@@ -939,8 +940,7 @@ c2_status_t objcpy(std::shared_ptr<C2Buffer>* d, const Buffer& s,
                     return C2_BAD_VALUE;
                 }
                 *d = C2Buffer::CreateGraphicBuffer(block->share(
-                        C2Rect(rectInfo->width, rectInfo->height,
-                               rectInfo->left, rectInfo->top),
+                        C2Rect(rectInfo->width, rectInfo->height).at(rectInfo->left, rectInfo->top),
                         dFence));
                 if (!(*d)) {
                     ALOGE("Cannot create a graphic buffer.");

@@ -91,7 +91,7 @@ private:
     C2_INLINE void addStructDescriptors(
             std::vector<C2StructDescriptor> &structs, _C2Tuple<T, Params...> *) {
         structs.emplace_back((T*)nullptr);
-        addStructDescriptors((_C2Tuple<Params...> *)nullptr);
+        addStructDescriptors(structs, (_C2Tuple<Params...> *)nullptr);
     }
 
     mutable std::mutex _mMutex;
@@ -224,7 +224,7 @@ public:
      * Typed field helper.
      */
     template<typename T>
-    struct C2_HIDE Field {
+    struct Field {
         /**
          * Constructor.
          *
@@ -264,32 +264,25 @@ public:
         C2ParamField _mField;
     };
 
-    template<typename T>
-    using C2P = Param<T>;
-
-    template<typename T>
-    class ParamBuilder;
-
     class ParamHelper {
     public:
         ParamHelper(ParamRef param, C2StringLiteral name, C2StructDescriptor &&);
         ParamHelper(ParamHelper &&);
         ~ParamHelper();
 
-        template<typename T>
-        static ParamBuilder<T> Build(std::shared_ptr<T> &param, C2StringLiteral name) {
-            return ParamBuilder<T>(param, name);
-        }
-
         /**
          * Finds a field descriptor.
          */
         std::shared_ptr<FieldHelper> findField(size_t baseOffs, size_t baseSize) const;
 
+        /// returns the parameter ref for this parameter
         const ParamRef ref() const;
 
+        /// returns the current value of this parameter as modifiable. The constness of this
+        /// object determines the constness of the returned value.
         std::shared_ptr<C2Param> value();
 
+        /// returns the current value of this parameter as const
         std::shared_ptr<const C2Param> value() const;
 
         /**
@@ -300,7 +293,7 @@ public:
          *                 parameter. This must not change.
          * \param mayBlock whether blocking is allowed
          * \param endValue the resulting value
-         * \param f        parameter factory (to access dependencies)
+         * \param factory  parameter factory (to access dependencies)
          * \param failures vector of failures to append any failures from this
          *                 operation
          *
@@ -314,36 +307,59 @@ public:
         c2_status_t trySet(
                 const C2Param *value, bool mayBlock,
                 bool *changed,
-                Factory &f,
+                Factory &factory,
                 std::vector<std::unique_ptr<C2SettingResult>>* const failures);
 
+        /// returns parameter indices that depend on this parameter
         const std::vector<C2Param::Index> getDownDependencies() const;
 
+        /// adds a dependent parameter
         void addDownDependency(C2Param::Index index);
 
+        /// returns that parameter refs for parameters that depend on this
         const std::vector<ParamRef> getDependenciesAsRefs() const;
 
-        // returns and moves out stored struct descriptor
+        /// returns and moves out stored struct descriptor
         C2StructDescriptor retrieveStructDescriptor();
 
+        /// returns the name of this parameter
+        C2String name() const;
+
+        /// returns the index of this parameter
         C2Param::Index index() const;
 
-        std::shared_ptr</* TODO const*/ C2ParamDescriptor> getDescriptor();
+        /// returns the parameter descriptor
+        std::shared_ptr<const C2ParamDescriptor> getDescriptor() const;
+
+        /**
+         * Validates param helper.
+         *
+         * For now, this fills field info for const params.
+         *
+         * \retval C2_CORRUPTED the parameter cannot be added as such
+         */
+        c2_status_t validate(const std::shared_ptr<C2ParamReflector> &reflector);
 
     protected:
         typedef C2ParamDescriptor::attrib_t attrib_t;
         attrib_t& attrib();
 
+        /// sets the default value of this parameter
         void setDefaultValue(std::shared_ptr<C2Param> default_);
 
+        /// sets the setter method
         void setSetter(std::function<C2R(const C2Param *, bool, bool *, Factory &)> setter);
 
+        /// sets the getter method
         void setGetter(std::function<std::shared_ptr<C2Param>(bool)> getter);
 
+        /// sets the dependencies
         void setDependencies(std::vector<C2Param::Index> indices, std::vector<ParamRef> refs);
 
-        void addFields(std::vector<C2ParamFieldValues> &&fields);
+        /// sets the fields and their supported values
+        void setFields(std::vector<C2ParamFieldValues> &&fields);
 
+        /// build this into a final ParamHelper object
         std::shared_ptr<ParamHelper> build();
 
         class Impl;
@@ -364,7 +380,10 @@ public:
               _mReflector(reflector) { }
 
         template<typename S>
-        using FieldType = Field<typename _c2_reduce_enum_to_underlying_type<typename std::remove_const<typename std::remove_extent<S>::type>::type>::type>;
+        using FieldType = Field<
+                typename _c2_reduce_enum_to_underlying_type<
+                        typename std::remove_const<
+                                typename std::remove_extent<S>::type>::type>::type>;
 
         template<typename S>
         FieldType<S> F(S &field) {
@@ -372,7 +391,8 @@ public:
             // this must fall either within sizeof(T) + FLEX_SIZE or param->size()
             // size_t size = sizeof(field);
             // mParam may be null
-            size_t baseOffs = GetBaseOffset(_mReflector, T::CORE_INDEX, offs - sizeof(C2Param)) + sizeof(C2Param);
+            size_t baseOffs = GetBaseOffset(
+                    _mReflector, T::CORE_INDEX, offs - sizeof(C2Param)) + sizeof(C2Param);
             size_t baseSize = sizeof(typename std::remove_extent<S>::type);
 
             std::shared_ptr<FieldHelper> helper = _mHelper->findField(baseOffs, baseSize);
@@ -403,6 +423,9 @@ public:
         std::shared_ptr<ParamHelper> _mHelper;
         std::shared_ptr<C2ParamReflector> _mReflector;
     };
+
+    template<typename T>
+    using C2P = Param<T>;
 
     /**
      * Templated move builder class for a parameter helper.
@@ -462,7 +485,7 @@ public:
 
         /** Adds all fields to this parameter with their possible values. */
         inline ParamBuilder &withFields(std::vector<C2ParamFieldValues> &&fields_) {
-            addFields(std::move(fields_));
+            setFields(std::move(fields_));
             return *this;
         }
 
@@ -473,7 +496,8 @@ public:
          */
         inline ParamBuilder &withConstValue(std::shared_ptr<T> default_) {
             attrib() |= attrib_t::IS_CONST;
-            setSetter([default_](const C2Param *value, bool mayBlock __unused, bool *changed, Factory &f __unused) -> C2R {
+            setSetter([default_](
+                    const C2Param *value, bool mayBlock __unused, bool *changed, Factory &) -> C2R {
                 *changed = false;
                 const T *typedValue = T::From(value);
                 if (typedValue == nullptr) {
@@ -485,7 +509,6 @@ public:
                 *changed = false;
                 return C2R::Ok();
             });
-            // TODO define currently supported values based on default value
             return withDefault(default_);
         }
 
@@ -506,7 +529,8 @@ public:
                 std::shared_ptr<Deps>& ... deps) {
             attrib() |= attrib_t::IS_STRICT;
             std::shared_ptr<T> *typedParam = mTypedParam;
-            setSetter([typedParam, fn, &deps...](const C2Param *value, bool mayBlock, bool *changed, Factory &f) -> C2R {
+            setSetter([typedParam, fn, &deps...](
+                    const C2Param *value, bool mayBlock, bool *changed, Factory &factory) -> C2R {
                 *changed = false;
                 const T *typedValue = T::From(value);
                 if (typedValue == nullptr) {
@@ -519,10 +543,10 @@ public:
                 if (proposedValue == nullptr) {
                     return C2R::NoMemory(value->index());
                 }
-                C2P<T> oldValue = f.get(*typedParam);
+                C2P<T> oldValue = factory.get(*typedParam);
                 // Get a parameter helper with value pointing to proposedValue
-                C2P<T> helper = f.get(*typedParam, proposedValue);
-                C2R result = fn(mayBlock, oldValue, helper, f.get(deps)...);
+                C2P<T> helper = factory.get(*typedParam, proposedValue);
+                C2R result = fn(mayBlock, oldValue, helper, factory.get(deps)...);
 
                 // If value changed, copy result to current value
                 if (helper.get() != *typedParam->get()) {
@@ -546,7 +570,8 @@ public:
         inline ParamBuilder &withSetter(
                 C2R (*fn)(bool, C2P<T> &, const C2P<Deps> &...), std::shared_ptr<Deps>& ... deps) {
             std::shared_ptr<T> *typedParam = mTypedParam;
-            setSetter([typedParam, fn, &deps...](const C2Param *value, bool mayBlock, bool *changed, Factory &f) -> C2R {
+            setSetter([typedParam, fn, &deps...](
+                    const C2Param *value, bool mayBlock, bool *changed, Factory &factory) -> C2R {
                 *changed = false;
                 const T *typedValue = T::From(value);
                 if (typedValue == nullptr) {
@@ -560,8 +585,8 @@ public:
                     return C2R::NoMemory(value->index());
                 }
                 // Get a parameter helper with value pointing to proposedValue
-                C2P<T> helper = f.get(*typedParam, proposedValue);
-                C2R result = fn(mayBlock, helper, f.get(deps)...);
+                C2P<T> helper = factory.get(*typedParam, proposedValue);
+                C2R result = fn(mayBlock, helper, factory.get(deps)...);
 
                 // If value changed, copy result to current value
                 if (helper.get() != *typedParam->get()) {
@@ -596,6 +621,11 @@ public:
         std::shared_ptr<T> *mTypedParam;
     };
 
+    template<typename T>
+    static ParamBuilder<T> DefineParam(std::shared_ptr<T> &param, C2StringLiteral name) {
+        return ParamBuilder<T>(param, name);
+    }
+
 public:
     c2_status_t query(
             const std::vector<C2Param*> &stackParams,
@@ -603,14 +633,26 @@ public:
             c2_blocking_t mayBlock,
             std::vector<std::unique_ptr<C2Param>>* const heapParams) const;
 
+    /**
+     * Helper implementing config calls as well as other configuration updates.
+     *
+     * \param params
+     * \param mayBlock
+     * \param failures
+     * \param updateParams if true, the updated parameter values are copied back into the arguments
+     *                     passed in |params|
+     * \param changes      pointed to a vector to receive settings with their values changed. If not
+     *                     null, settings with their values changed are added to this.
+     * \return result from config
+     */
     c2_status_t config(
-           const std::vector<C2Param*> &params, c2_blocking_t mayBlock,
-           std::vector<std::unique_ptr<C2SettingResult>>* const failures,
-           std::vector<std::shared_ptr<C2Param>> *changes = nullptr);
+            const std::vector<C2Param*> &params, c2_blocking_t mayBlock,
+            std::vector<std::unique_ptr<C2SettingResult>>* const failures,
+            bool updateParams = true,
+            std::vector<std::shared_ptr<C2Param>> *changes = nullptr);
 
-    c2_status_t querySupportedParams(std::vector<std::shared_ptr<C2ParamDescriptor>> *const params) const {
-        return _mFactory.querySupportedParams(params);
-    }
+    c2_status_t querySupportedParams(
+            std::vector<std::shared_ptr<C2ParamDescriptor>> *const params) const;
 
     c2_status_t querySupportedValues(
             std::vector<C2FieldSupportedValuesQuery> &fields, c2_blocking_t mayBlock) const;
@@ -627,89 +669,28 @@ private:
     }
 
 protected:
-    struct MyFactory : public Factory {
-        virtual std::shared_ptr<C2ParamReflector> getReflector() const override {
-            return _mReflector;
-        }
-
-        virtual std::shared_ptr<ParamHelper> getParamHelper(const ParamRef &param) const override {
-            return _mParams.find(param)->second;
-        }
-
-    public:
-        MyFactory(std::shared_ptr<C2ParamReflector> reflector)
-            : _mReflector(reflector) { }
-
-        virtual ~MyFactory() = default;
-
-        void addParam(std::shared_ptr<ParamHelper> param) {
-            _mParams.insert({param->ref(), param});
-            _mIndexToHelper.insert({param->index(), param});
-
-            // add down-dependencies
-            for (const ParamRef &ref : param->getDependenciesAsRefs()) {
-                // dependencies must already be defined
-                _mParams.find(ref)->second->addDownDependency(param->index());
-            }
-
-            _mDependencyIndex.emplace(param->index(), _mDependencyIndex.size());
-        }
-
-        std::shared_ptr<ParamHelper> getParam(C2Param::Index ix) const {
-            // TODO: handle streams separately
-            const auto it = _mIndexToHelper.find(ix);
-            if (it == _mIndexToHelper.end()) {
-                return nullptr;
-            }
-            return it->second;
-        }
-
-        /**
-         * TODO: this could return a copy using proper pointer cast.
-         */
-        std::shared_ptr<C2Param> getParamValue(C2Param::Index ix) const {
-            std::shared_ptr<ParamHelper> helper = getParam(ix);
-            return helper ? helper->value() : nullptr;
-        }
-
-        c2_status_t querySupportedParams(
-                std::vector<std::shared_ptr<C2ParamDescriptor>> *const params) const {
-            for (const auto &it : _mParams) {
-                params->push_back(it.second->getDescriptor());
-            }
-            // TODO: handle errors
-            return C2_OK;
-        }
-
-        size_t getDependencyIndex(C2Param::Index ix) {
-            // in this version of the helper there is only a single stream so
-            // we can look up directly by index
-            auto it = _mDependencyIndex.find(ix);
-            return it == _mDependencyIndex.end() ? SIZE_MAX : it->second;
-        }
-
-    private:
-        std::map<ParamRef, std::shared_ptr<ParamHelper>> _mParams;
-        std::map<C2Param::Index, std::shared_ptr<ParamHelper>> _mIndexToHelper;
-        std::shared_ptr<C2ParamReflector> _mReflector;
-        std::map<C2Param::Index, size_t> _mDependencyIndex;
-    };
-
     std::shared_ptr<C2ReflectorHelper> mReflector;
-    MyFactory _mFactory;
+    struct FactoryImpl;
+    std::shared_ptr<FactoryImpl> _mFactory;
 
-    void addParameter(std::shared_ptr<ParamHelper> param) {
-        _mFactory.addParam(param);
-        mReflector->addStructDescriptor(param->retrieveStructDescriptor());
-    }
+    C2InterfaceHelper(std::shared_ptr<C2ReflectorHelper> reflector);
 
-    size_t getDependencyIndex(C2Param::Index ix) {
-        return _mFactory.getDependencyIndex(ix);
-    }
+    /**
+     * Adds a parameter to this interface.
+     * \note This method CHECKs.
+     *
+     * \param param parameter to add.
+     */
+    void addParameter(std::shared_ptr<ParamHelper> param);
 
-    C2InterfaceHelper(std::shared_ptr<C2ReflectorHelper> reflector)
-        : mReflector(reflector),
-          _mFactory(reflector) { }
+    /**
+     * Returns the dependency index for a parameter.
+     *
+     * \param ix the index of the parameter
+     */
+    size_t getDependencyIndex(C2Param::Index ix) const;
+
+    virtual ~C2InterfaceHelper() = default;
 
     /**
      * Sets subclass instance's address and size.
@@ -717,8 +698,8 @@ protected:
      * \todo allow subclass to specify parameter address range directly (e.g. do not assume that
      *       they are local to the subclass instance)
      *
-     * @param T type of the derived instance
-     * @param instance pointer to the derived instance
+     * \param T type of the derived instance
+     * \param instance pointer to the derived instance
      */
     template<typename T>
     inline C2_HIDE void setDerivedInstance(T *instance) {
