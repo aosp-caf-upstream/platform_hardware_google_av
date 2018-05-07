@@ -78,6 +78,8 @@ struct ClientManager : public IClientManager {
      *
      * @param connectionId  The id of the connection.
      * @param params        The allocation parameters.
+     * @param handle        The native handle to the allocated buffer. handle
+     *                      should be cloned before use.
      * @param buffer        The allocated buffer.
      *
      * @return OK when a buffer was allocated successfully.
@@ -87,6 +89,7 @@ struct ClientManager : public IClientManager {
      */
     ResultStatus allocate(ConnectionId connectionId,
                           const std::vector<uint8_t> &params,
+                          native_handle_t **handle,
                           std::shared_ptr<BufferPoolData> *buffer);
 
     /**
@@ -96,6 +99,8 @@ struct ClientManager : public IClientManager {
      * @param transactionId The id for the transaction.
      * @param bufferId      The id for the buffer.
      * @param timestampUs   The timestamp of the buffer is being sent.
+     * @param handle        The native handle to the allocated buffer. handle
+     *                      should be cloned before use.
      * @param buffer        The received buffer.
      *
      * @return OK when a buffer was received successfully.
@@ -107,6 +112,7 @@ struct ClientManager : public IClientManager {
                          TransactionId transactionId,
                          BufferId bufferId,
                          int64_t timestampUs,
+                          native_handle_t **handle,
                          std::shared_ptr<BufferPoolData> *buffer);
 
     /**

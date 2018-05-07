@@ -29,7 +29,7 @@ namespace bufferpool {
 namespace V1_0 {
 namespace implementation {
 
-static constexpr int64_t kReceiveTimeoutUs = 5000; // 5ms
+static constexpr int64_t kReceiveTimeoutUs = 100000; // 100ms
 static constexpr int kPostMaxRetry = 3;
 static constexpr int kCacheTtlUs = 500000; // TODO: tune
 
@@ -53,11 +53,13 @@ public:
     }
 
     ResultStatus allocate(const std::vector<uint8_t> &params,
-                         std::shared_ptr<BufferPoolData> *buffer);
+                          native_handle_t **handle,
+                          std::shared_ptr<BufferPoolData> *buffer);
 
     ResultStatus receive(
             TransactionId transactionId, BufferId bufferId,
-            int64_t timestampUs, std::shared_ptr<BufferPoolData> *buffer);
+            int64_t timestampUs,
+            native_handle_t **handle, std::shared_ptr<BufferPoolData> *buffer);
 
     void postBufferRelease(BufferId bufferId);
 
@@ -172,10 +174,11 @@ public:
         return mHasCache;
     }
 
-    std::shared_ptr<BufferPoolData> fetchCache() {
+    std::shared_ptr<BufferPoolData> fetchCache(native_handle_t **pHandle) {
         if (mHasCache) {
             std::shared_ptr<BufferPoolData> cache = mCache.lock();
             if (cache) {
+                *pHandle = mHandle;
                 updateExpire();
             }
             return cache;
@@ -184,18 +187,20 @@ public:
     }
 
     std::shared_ptr<BufferPoolData> createCache(
-            const std::shared_ptr<BufferPoolClient::Impl> &impl) {
+            const std::shared_ptr<BufferPoolClient::Impl> &impl,
+            native_handle_t **pHandle) {
         if (!mHasCache) {
             // Allocates a raw ptr in order to avoid sending #postBufferRelease
             // from deleter, in case of native_handle_clone failure.
             BufferPoolData *ptr = new BufferPoolData(
-                    mConnectionId, mId, mAccessor, native_handle_clone(mHandle));
-            if (ptr && ptr->mHandle != NULL) {
+                    mConnectionId, mId, mAccessor);
+            if (ptr) {
                 std::shared_ptr<BufferPoolData>
                         cache(ptr, BlockPoolDataDtor(impl));
                 if (cache) {
                     mCache = cache;
                     mHasCache = true;
+                    *pHandle = mHandle;
                     updateExpire();
                     return cache;
                 }
@@ -256,6 +261,7 @@ BufferPoolClient::Impl::Impl(const sp<IAccessor> &accessor)
 
 ResultStatus BufferPoolClient::Impl::allocate(
         const std::vector<uint8_t> &params,
+        native_handle_t **pHandle,
         std::shared_ptr<BufferPoolData> *buffer) {
     if (!mLocal || !mLocalConnection || !mValid) {
         return ResultStatus::CRITICAL_ERROR;
@@ -280,7 +286,7 @@ ResultStatus BufferPoolClient::Impl::allocate(
                         bufferId, std::move(clientBuffer)));
                 if (result.second) {
                     *buffer = result.first->second->createCache(
-                            shared_from_this());
+                            shared_from_this(), pHandle);
                 }
             }
         }
@@ -296,6 +302,7 @@ ResultStatus BufferPoolClient::Impl::allocate(
 
 ResultStatus BufferPoolClient::Impl::receive(
         TransactionId transactionId, BufferId bufferId, int64_t timestampUs,
+        native_handle_t **pHandle,
         std::shared_ptr<BufferPoolData> *buffer) {
     if (!mValid) {
         return ResultStatus::CRITICAL_ERROR;
@@ -314,7 +321,7 @@ ResultStatus BufferPoolClient::Impl::receive(
         auto cacheIt = mCache.mBuffers.find(bufferId);
         if (cacheIt != mCache.mBuffers.end()) {
             if (cacheIt->second->hasCache()) {
-                *buffer = cacheIt->second->fetchCache();
+                *buffer = cacheIt->second->fetchCache(pHandle);
                 if (!*buffer) {
                     // check transfer time_out
                     lock.unlock();
@@ -324,7 +331,7 @@ ResultStatus BufferPoolClient::Impl::receive(
                 ALOGV("client receive from reference %lld", (long long)mConnectionId);
                 break;
             } else {
-                *buffer = cacheIt->second->createCache(shared_from_this());
+                *buffer = cacheIt->second->createCache(shared_from_this(), pHandle);
                 ALOGV("client receive from cache %lld", (long long)mConnectionId);
                 break;
             }
@@ -345,7 +352,7 @@ ResultStatus BufferPoolClient::Impl::receive(
                                             clientBuffer)));
                             if (result.second) {
                                 *buffer = result.first->second->createCache(
-                                        shared_from_this());
+                                        shared_from_this(), pHandle);
                             }
                         }
                     }
@@ -541,18 +548,19 @@ ResultStatus BufferPoolClient::getAccessor(sp<IAccessor> *accessor) {
 
 ResultStatus BufferPoolClient::allocate(
         const std::vector<uint8_t> &params,
+        native_handle_t **handle,
         std::shared_ptr<BufferPoolData> *buffer) {
     if (isValid()) {
-        return mImpl->allocate(params, buffer);
+        return mImpl->allocate(params, handle, buffer);
     }
     return ResultStatus::CRITICAL_ERROR;
 }
 
 ResultStatus BufferPoolClient::receive(
         TransactionId transactionId, BufferId bufferId, int64_t timestampUs,
-        std::shared_ptr<BufferPoolData> *buffer) {
+        native_handle_t **handle, std::shared_ptr<BufferPoolData> *buffer) {
     if (isValid()) {
-        return mImpl->receive(transactionId, bufferId, timestampUs, buffer);
+        return mImpl->receive(transactionId, bufferId, timestampUs, handle, buffer);
     }
     return ResultStatus::CRITICAL_ERROR;
 }

@@ -357,9 +357,8 @@ void SimpleC2Component::processQueue() {
                 return err;
             }
             if (outputFormat.value == C2FormatVideo) {
-                // TODO: PLATFORM_START is temporary.
-                err = GetCodec2BlockPool(
-                        C2BlockPool::PLATFORM_START,
+                err = CreateCodec2BlockPool(
+                        C2PlatformAllocatorStore::BUFFERQUEUE,
                         shared_from_this(), &mOutputBlockPool);
             } else {
                 err = CreateCodec2BlockPool(

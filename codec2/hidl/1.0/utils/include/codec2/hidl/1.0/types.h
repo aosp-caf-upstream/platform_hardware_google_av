@@ -17,8 +17,12 @@
 #ifndef HARDWARE_GOOGLE_MEDIA_C2_V1_0_UTILS_TYPES_H
 #define HARDWARE_GOOGLE_MEDIA_C2_V1_0_UTILS_TYPES_H
 
-#include <hardware/google/media/c2/1.0/types.h>
+#include <bufferpool/ClientManager.h>
+#include <android/hardware/media/bufferpool/1.0/IAccessor.h>
+#include <android/hardware/media/bufferpool/1.0/IClientManager.h>
+#include <android/hardware/media/bufferpool/1.0/types.h>
 #include <hardware/google/media/c2/1.0/IComponentStore.h>
+#include <hardware/google/media/c2/1.0/types.h>
 
 #include <C2Component.h>
 #include <C2Param.h>
@@ -37,6 +41,8 @@ using ::android::hardware::hidl_handle;
 using ::android::hardware::hidl_string;
 using ::android::hardware::hidl_vec;
 using ::android::sp;
+using ::android::hardware::media::bufferpool::V1_0::implementation::
+        ConnectionId;
 
 // Types of metadata for Blocks.
 struct C2Hidl_Range {
@@ -116,14 +122,82 @@ c2_status_t objcpy(
         std::unique_ptr<C2StructDescriptor>* d,
         const StructDescriptor& s);
 
+// Abstract class to be used in
+// objcpy(std::list<std::unique_ptr<C2Work>> -> WorkBundle).
+struct BufferPoolSender {
+    typedef ::android::hardware::media::bufferpool::V1_0::
+            ResultStatus ResultStatus;
+    typedef ::android::hardware::media::bufferpool::V1_0::
+            BufferStatusMessage BufferStatusMessage;
+    typedef ::android::hardware::media::bufferpool::
+            BufferPoolData BufferPoolData;
+
+    /**
+     * Send bpData and return BufferStatusMessage that can be supplied to
+     * IClientManager::receive() in the receiving process.
+     *
+     * This function will be called from within the function
+     * objcpy(std::list<std::unique_ptr<C2Work>> -> WorkBundle).
+     *
+     * \param[in] bpData BufferPoolData identifying the buffer to send.
+     * \param[out] bpMessage BufferStatusMessage of the transaction. Information
+     *    inside \p bpMessage should be passed to the receiving process by some
+     *    other means so it can call receive() properly.
+     * \return ResultStatus value that determines the success of the operation.
+     *    (See the possible values of ResultStatus in
+     *    hardware/interfaces/media/bufferpool/1.0/types.hal.)
+     */
+    virtual ResultStatus send(
+            const std::shared_ptr<BufferPoolData>& bpData,
+            BufferStatusMessage* bpMessage) = 0;
+
+    virtual ~BufferPoolSender() = default;
+};
+
+// Default implementation of BufferPoolSender.
+//
+// To use DefaultBufferPoolSender, the IClientManager instance of the receiving
+// process must be set before send() can operate. DefaultBufferPoolSender will
+// hold a strong reference to the IClientManager instance and use it to call
+// IClientManager::registerSender() to establish the bufferpool connection when
+// send() is called.
+struct DefaultBufferPoolSender : BufferPoolSender {
+    typedef ::android::hardware::media::bufferpool::V1_0::implementation::
+            ClientManager ClientManager;
+    typedef ::android::hardware::media::bufferpool::V1_0::
+            IClientManager IClientManager;
+    typedef ::android::hardware::media::bufferpool::V1_0::
+            IAccessor IAccessor;
+
+    // Set the IClientManager of the receiving process to receiverManager.
+    DefaultBufferPoolSender(const sp<IClientManager>& receiverManager = nullptr);
+
+    // Set the IClientManager of the receiving process to receiverManager.
+    void setReceiver(const sp<IClientManager>& receiverManager);
+
+    // Implementation of BufferPoolSender::send(). The first time send() is
+    // called, the bufferpool connection will be established with the
+    // previously-set IClientManager of the receiving process.
+    virtual ResultStatus send(
+            const std::shared_ptr<BufferPoolData>& bpData,
+            BufferStatusMessage* bpMessage) override;
+
+private:
+    std::mutex mMutex;
+    sp<ClientManager> mSenderManager;
+    sp<IClientManager> mReceiverManager;
+    int64_t mReceiverConnectionId;
+    sp<IAccessor> mSourceAccessor;
+};
+
 // std::list<std::unique_ptr<C2Work>> -> WorkBundle
-// TODO: Connect with Bufferpool
+// Note: If bufferpool will be used, bpSender must not be null.
 Status objcpy(
         WorkBundle* d,
-        const std::list<std::unique_ptr<C2Work>>& s);
+        const std::list<std::unique_ptr<C2Work>>& s,
+        BufferPoolSender* bpSender = nullptr);
 
 // WorkBundle -> std::list<std::unique_ptr<C2Work>>
-// TODO: Connect with Bufferpool
 c2_status_t objcpy(
         std::list<std::unique_ptr<C2Work>>* d,
         const WorkBundle& s);
@@ -182,6 +256,14 @@ c2_status_t copyParamsFromBlob(
 c2_status_t updateParamsFromBlob(
         const std::vector<C2Param*>& params,
         const Params& blob);
+
+/**
+ * Converts a BufferPool status value to c2_status_t.
+ * \param BufferPool status
+ * \return Corresponding c2_status_t
+ */
+c2_status_t toC2Status(::android::hardware::media::bufferpool::V1_0::
+        ResultStatus rs);
 
 }  // namespace utils
 }  // namespace V1_0

@@ -83,6 +83,11 @@ public:
     status_t setInputSurface(const std::shared_ptr<InputSurfaceWrapper> &surface);
 
     /**
+     * Signal EOS to input surface.
+     */
+    status_t signalEndOfInputStream();
+
+    /**
      * Start queueing buffers to the component. This object should never queue
      * buffers before this call.
      */
@@ -101,7 +106,14 @@ public:
      *
      * @param workItems   finished work item.
      */
-    void onWorkDone(const std::unique_ptr<C2Work> &work);
+    void onWorkDone(std::unique_ptr<C2Work> work);
+
+    enum MetaMode {
+        MODE_NONE,
+        MODE_ANW,
+    };
+
+    void setMetaMode(MetaMode mode);
 
     // Internal classes
     class Buffers;
@@ -195,6 +207,8 @@ private:
     Mutexed<InputRefs> mInputRefs;
 
     std::shared_ptr<InputSurfaceWrapper> mInputSurface;
+
+    MetaMode mMetaMode;
 
     inline bool hasCryptoOrDescrambler() {
         return mCrypto != NULL || mDescrambler != NULL;

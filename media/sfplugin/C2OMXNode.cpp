@@ -52,7 +52,7 @@ public:
 C2OMXNode::C2OMXNode(const std::shared_ptr<Codec2Client::Component> &comp)
     : mComp(comp), mFrameIndex(0), mWidth(0), mHeight(0) {
     // TODO: read from intf()
-    if (!strncmp(comp->getName().c_str(), "c2.google.", 10)) {
+    if (!strncmp(comp->getName().c_str(), "c2.android.", 11)) {
         mUsage = GRALLOC_USAGE_SW_READ_OFTEN;
     } else {
         mUsage = GRALLOC_USAGE_HW_VIDEO_ENCODER;
@@ -208,11 +208,13 @@ status_t C2OMXNode::emptyBuffer(
         return NO_INIT;
     }
 
-    uint32_t c2Flags = 0;
+    uint32_t c2Flags = (flags & OMX_BUFFERFLAG_EOS)
+            ? C2FrameData::FLAG_END_OF_STREAM : 0;
     std::shared_ptr<C2GraphicBlock> block;
 
     C2Handle *handle = nullptr;
-    if (omxBuf.mBufferType == OMXBuffer::kBufferTypeANWBuffer) {
+    if (omxBuf.mBufferType == OMXBuffer::kBufferTypeANWBuffer
+            && omxBuf.mGraphicBuffer != nullptr) {
         std::shared_ptr<C2GraphicAllocation> alloc;
         handle = WrapNativeCodec2GrallocHandle(
                 native_handle_clone(omxBuf.mGraphicBuffer->handle),
@@ -227,7 +229,7 @@ status_t C2OMXNode::emptyBuffer(
         }
         block = _C2BlockFactory::CreateGraphicBlock(alloc);
     } else if (flags & OMX_BUFFERFLAG_EOS) {
-        c2Flags = C2FrameData::FLAG_END_OF_STREAM;
+        return comp->drain(C2Component::DRAIN_COMPONENT_WITH_EOS);
     } else {
         return BAD_VALUE;
     }

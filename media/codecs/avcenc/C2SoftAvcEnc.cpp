@@ -123,7 +123,7 @@ private:
 
 #define ive_api_function  ih264e_api_function
 
-constexpr char COMPONENT_NAME[] = "c2.google.avc.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.avc.encoder";
 
 namespace {
 

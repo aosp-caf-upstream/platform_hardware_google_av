@@ -73,7 +73,7 @@ struct InputSurface : public IInputSurface {
 // New methods from IInputSurface
 
     virtual Return<void> connectToComponent(
-            const sp<IBase>& component,
+            const sp<IComponent>& component,
             connectToComponent_cb _hidl_cb) override;
 
     virtual Return<sp<IConfigurable>> getConfigurable() override;
@@ -167,10 +167,14 @@ struct InputSurface : public IInputSurface {
     virtual Return<void> getUniqueId(
             getUniqueId_cb _hidl_cb) override;
 
+    class ConfigurableImpl;
+
 protected:
     sp<ComponentStore> mStore;
     sp<HGraphicBufferProducer> mBase;
     sp<GraphicBufferSource> mSource;
+    std::shared_ptr<ConfigurableImpl> mHelper;
+    sp<CachedConfigurable> mConfigurable;
 
     InputSurface(
             const sp<ComponentStore>& store,

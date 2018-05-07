@@ -66,26 +66,17 @@ struct C2_HIDE _C2CoreIndexHelper_impl
     static std::false_type TestCoreIndex(...);
 };
 
-/// Helper template that verifies a type's CORE_INDEX and creates it if the type does not have one.
-template<typename S, int CoreIndex,
-        bool HasBase=decltype(_C2CoreIndexHelper_impl::TestCoreIndex<S>(0))::value>
-struct C2_HIDE _C2CoreIndexOverride {
-    // TODO: what if we allow structs without CORE_INDEX?
-    static_assert(CoreIndex == S::CORE_INDEX, "CORE_INDEX differs from structure");
-};
+/// Macro that defines and thus overrides a type's CORE_INDEX for a setting
+#define _C2_CORE_INDEX_OVERRIDE(coreIndex) \
+public: \
+    enum : uint32_t { CORE_INDEX = coreIndex };
 
-/// Specialization for types without a CORE_INDEX.
-template<typename S, int CoreIndex>
-struct C2_HIDE _C2CoreIndexOverride<S, CoreIndex, false> {
-public:
-    enum : uint32_t {
-        CORE_INDEX = CoreIndex, ///< CORE_INDEX override.
-    };
-};
 
-/// Helper template that adds a CORE_INDEX to a type if it does not have one.
+/// Helper template that adds a CORE_INDEX to a type if it does not have one (for testing)
 template<typename S, int CoreIndex>
-struct C2_HIDE _C2AddCoreIndex : public S, public _C2CoreIndexOverride<S, CoreIndex> {};
+struct C2_HIDE _C2AddCoreIndex : public S {
+    _C2_CORE_INDEX_OVERRIDE(CoreIndex)
+};
 
 /**
  * \brief Helper class to check struct requirements for parameters.
@@ -306,8 +297,9 @@ public: \
  * structures.
  */
 template<typename T, typename S, int ParamIndex=S::CORE_INDEX, class Flex=void>
-struct C2_HIDE C2GlobalParam : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+struct C2_HIDE C2GlobalParam : public T, public S,
         public _C2StructCheck<S, ParamIndex, T::PARAM_KIND | T::Type::DIR_GLOBAL> {
+    _C2_CORE_INDEX_OVERRIDE(ParamIndex)
 private:
     typedef C2GlobalParam<T, S, ParamIndex> _Type;
 
@@ -372,8 +364,9 @@ public:
  * unspecified port expose a setPort method, and add an initial port parameter to the constructor.
  */
 template<typename T, typename S, int ParamIndex=S::CORE_INDEX, class Flex=void>
-struct C2_HIDE C2PortParam : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+struct C2_HIDE C2PortParam : public T, public S,
         private _C2StructCheck<S, ParamIndex, T::PARAM_KIND | T::Index::DIR_UNDEFINED> {
+    _C2_CORE_INDEX_OVERRIDE(ParamIndex)
 private:
     typedef C2PortParam<T, S, ParamIndex> _Type;
 
@@ -390,8 +383,9 @@ public:
     DEFINE_CAST_OPERATORS(_Type)
 
     /// Specialization for an input port parameter.
-    struct input : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+    struct input : public T, public S,
             public _C2StructCheck<S, ParamIndex, T::PARAM_KIND | T::Index::DIR_INPUT> {
+        _C2_CORE_INDEX_OVERRIDE(ParamIndex)
         /// Wrapper around base structure's constructor.
         template<typename ...Args>
         inline input(const Args(&... args)) : T(sizeof(_Type), input::PARAM_TYPE), S(args...) { }
@@ -401,8 +395,9 @@ public:
     };
 
     /// Specialization for an output port parameter.
-    struct output : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+    struct output : public T, public S,
             public _C2StructCheck<S, ParamIndex, T::PARAM_KIND | T::Index::DIR_OUTPUT> {
+        _C2_CORE_INDEX_OVERRIDE(ParamIndex)
         /// Wrapper around base structure's constructor.
         template<typename ...Args>
         inline output(const Args(&... args)) : T(sizeof(_Type), output::PARAM_TYPE), S(args...) { }
@@ -508,9 +503,10 @@ public:
  * parameter to the constructor.
  */
 template<typename T, typename S, int ParamIndex=S::CORE_INDEX, class Flex=void>
-struct C2_HIDE C2StreamParam : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+struct C2_HIDE C2StreamParam : public T, public S,
         private _C2StructCheck<S, ParamIndex,
                 T::PARAM_KIND | T::Index::IS_STREAM_FLAG | T::Index::DIR_UNDEFINED> {
+    _C2_CORE_INDEX_OVERRIDE(ParamIndex)
 private:
     typedef C2StreamParam<T, S, ParamIndex> _Type;
 
@@ -531,9 +527,11 @@ public:
     DEFINE_CAST_OPERATORS(_Type)
 
     /// Specialization for an input stream parameter.
-    struct input : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+    struct input : public T, public S,
             public _C2StructCheck<S, ParamIndex,
                     T::PARAM_KIND | T::Index::IS_STREAM_FLAG | T::Type::DIR_INPUT> {
+        _C2_CORE_INDEX_OVERRIDE(ParamIndex)
+
         /// Default constructor. Stream-ID is undefined.
         inline input() : T(sizeof(_Type), input::PARAM_TYPE) { }
         /// Wrapper around base structure's constructor while also specifying stream-ID.
@@ -547,9 +545,11 @@ public:
     };
 
     /// Specialization for an output stream parameter.
-    struct output : public T, public S, public _C2CoreIndexOverride<S, ParamIndex>,
+    struct output : public T, public S,
             public _C2StructCheck<S, ParamIndex,
                     T::PARAM_KIND | T::Index::IS_STREAM_FLAG | T::Type::DIR_OUTPUT> {
+        _C2_CORE_INDEX_OVERRIDE(ParamIndex)
+
         /// Default constructor. Stream-ID is undefined.
         inline output() : T(sizeof(_Type), output::PARAM_TYPE) { }
         /// Wrapper around base structure's constructor while also specifying stream-ID.

@@ -84,7 +84,7 @@ private:
     std::shared_ptr<C2StreamChannelCountInfo::input> mChannelCount;
     std::shared_ptr<C2BitrateTuning::output> mBitrate;
 };
-constexpr char COMPONENT_NAME[] = "c2.google.flac.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.flac.encoder";
 
 C2SoftFlacEnc::C2SoftFlacEnc(
         const char *name,

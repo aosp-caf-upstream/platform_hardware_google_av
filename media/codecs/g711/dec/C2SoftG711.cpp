@@ -29,9 +29,9 @@
 namespace android {
 
 #ifdef ALAW
-constexpr char kComponentName[] = "c2.google.g711.alaw.decoder";
+constexpr char kComponentName[] = "c2.android.g711.alaw.decoder";
 #else
-constexpr char kComponentName[] = "c2.google.g711.mlaw.decoder";
+constexpr char kComponentName[] = "c2.android.g711.mlaw.decoder";
 #endif
 
 static std::shared_ptr<C2ComponentInterface> BuildIntf(

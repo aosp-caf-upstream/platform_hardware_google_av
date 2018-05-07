@@ -68,11 +68,13 @@ private:
     ResultStatus getAccessor(sp<IAccessor> *accessor);
 
     ResultStatus allocate(const std::vector<uint8_t> &params,
+                          native_handle_t **handle,
                           std::shared_ptr<BufferPoolData> *buffer);
 
     ResultStatus receive(TransactionId transactionId,
                          BufferId bufferId,
                          int64_t timestampUs,
+                         native_handle_t **handle,
                          std::shared_ptr<BufferPoolData> *buffer);
 
     ResultStatus postSend(ConnectionId receiver,

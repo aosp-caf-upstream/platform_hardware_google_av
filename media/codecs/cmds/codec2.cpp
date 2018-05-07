@@ -214,7 +214,7 @@ void SimplePlayer::play(const sp<IMediaSource> &source) {
 
     std::shared_ptr<C2ComponentStore> store = GetCodec2PlatformComponentStore();
     std::shared_ptr<C2Component> component;
-    (void)store->createComponent("c2.google.avc.decoder", &component);
+    (void)store->createComponent("c2.android.avc.decoder", &component);
 
     (void)component->setListener_vb(mListener, C2_DONT_BLOCK);
     std::unique_ptr<C2PortBlockPoolsTuning::output> pools =

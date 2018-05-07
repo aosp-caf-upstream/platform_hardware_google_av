@@ -36,7 +36,7 @@ extern "C" {
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.vorbis.decoder";
+constexpr char kComponentName[] = "c2.android.vorbis.decoder";
 
 static std::shared_ptr<C2ComponentInterface> BuildIntf(
         const char *name, c2_node_id_t id,
