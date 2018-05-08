@@ -42,7 +42,7 @@ using ::android::hardware::graphics::common::V1_0::PixelFormat;
 
 struct C2_HIDE C2BufferQueueBlockPoolData : public _C2BlockPoolData {
 
-    virtual Type getType() const override {
+    virtual type_t getType() const override {
         return TYPE_BUFFERQUEUE;
     }
 
@@ -249,8 +249,6 @@ public:
                 if (err != C2_OK) {
                     return err;
                 }
-                const C2Handle *handle = alloc->handle();
-                C2AllocatorGralloc::useIgbp(handle);
                 std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
                         std::make_shared<C2BufferQueueBlockPoolData>((uint64_t)0, ~0);
                 // TODO: config?

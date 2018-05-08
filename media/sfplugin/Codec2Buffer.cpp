@@ -19,8 +19,13 @@
 #include <utils/Log.h>
 
 #include <hidlmemory/FrameworkUtils.h>
+#include <media/hardware/HardwareAPI.h>
 #include <media/stagefright/foundation/ABuffer.h>
 #include <media/stagefright/foundation/AMessage.h>
+#include <nativebase/nativebase.h>
+
+#include <C2AllocatorGralloc.h>
+#include <C2BlockInternal.h>
 
 #include "Codec2Buffer.h"
 
@@ -471,6 +476,50 @@ std::shared_ptr<C2Buffer> GraphicBlockBuffer::asC2Buffer() {
     }
     return C2Buffer::CreateGraphicBuffer(
             mBlock->share(C2Rect(width, height), C2Fence()));
+}
+
+// GraphicMetadataBuffer
+GraphicMetadataBuffer::GraphicMetadataBuffer(
+        const sp<AMessage> &format,
+        const std::shared_ptr<C2Allocator> &alloc)
+    : Codec2Buffer(format, new ABuffer(sizeof(VideoNativeMetadata))),
+      mAlloc(alloc) {
+    ((VideoNativeMetadata *)base())->pBuffer = 0;
+}
+
+std::shared_ptr<C2Buffer> GraphicMetadataBuffer::asC2Buffer() {
+#ifndef __LP64__
+    VideoNativeMetadata *meta = (VideoNativeMetadata *)base();
+    ANativeWindowBuffer *buffer = (ANativeWindowBuffer *)meta->pBuffer;
+    if (buffer == nullptr) {
+        ALOGD("VideoNativeMetadata contains null buffer");
+        return nullptr;
+    }
+
+    ALOGV("VideoNativeMetadata: %dx%d", buffer->width, buffer->height);
+    C2Handle *handle = WrapNativeCodec2GrallocHandle(
+            native_handle_clone(buffer->handle),
+            buffer->width,
+            buffer->height,
+            buffer->format,
+            buffer->usage,
+            buffer->stride);
+    std::shared_ptr<C2GraphicAllocation> alloc;
+    c2_status_t err = mAlloc->priorGraphicAllocation(handle, &alloc);
+    if (err != C2_OK) {
+        ALOGD("Failed to wrap VideoNativeMetadata into C2GraphicAllocation");
+        return nullptr;
+    }
+    std::shared_ptr<C2GraphicBlock> block = _C2BlockFactory::CreateGraphicBlock(alloc);
+
+    meta->pBuffer = 0;
+    // TODO: fence
+    return C2Buffer::CreateGraphicBuffer(
+            block->share(C2Rect(buffer->width, buffer->height), C2Fence()));
+#else
+    ALOGE("GraphicMetadataBuffer does not work on 64-bit arch");
+    return nullptr;
+#endif
 }
 
 // ConstGraphicBlockBuffer

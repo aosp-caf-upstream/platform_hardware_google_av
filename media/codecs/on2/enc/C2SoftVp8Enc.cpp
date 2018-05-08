@@ -23,7 +23,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.vp8.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.vp8.encoder";
 
 C2SoftVp8Enc::C2SoftVp8Enc(const char* name, c2_node_id_t id,
                            const std::shared_ptr<IntfImpl>& intfImpl)

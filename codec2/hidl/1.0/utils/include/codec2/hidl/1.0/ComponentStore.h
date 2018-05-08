@@ -21,9 +21,7 @@
 #include <codec2/hidl/1.0/Configurable.h>
 #include <hardware/google/media/c2/1.0/IComponentStore.h>
 #include <android/hardware/media/bufferpool/1.0/IClientManager.h>
-#include <hidl/HidlBinderSupport.h>
 #include <hidl/Status.h>
-#include <hwbinder/IBinder.h>
 
 #include <C2Component.h>
 #include <C2Param.h>
@@ -50,7 +48,6 @@ using ::android::hardware::hidl_string;
 using ::android::hardware::hidl_vec;
 using ::android::hardware::Return;
 using ::android::hardware::Void;
-using ::android::hardware::IBinder;
 using ::android::sp;
 using ::android::wp;
 
@@ -94,8 +91,6 @@ protected:
             mStructDescriptors;
     mutable std::mutex mStructDescriptorsMutex;
 
-    sp<IClientManager> mPoolManager;
-
     // Component lifetime management
     Component::Roster mComponentRoster;
     mutable std::mutex mComponentRosterMutex;
@@ -104,8 +99,8 @@ protected:
     friend Component;
 
     // C2Component lookup
-    std::shared_ptr<C2Component> findC2Component(const wp<IBinder>& binder)
-            const;
+    std::shared_ptr<C2Component> findC2Component(
+            const wp<IComponent>& component) const;
 
     friend struct InputSurface;
 };

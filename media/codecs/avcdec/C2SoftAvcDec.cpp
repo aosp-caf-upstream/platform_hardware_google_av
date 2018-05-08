@@ -87,7 +87,7 @@ private:
     std::shared_ptr<C2VideoSizeStreamInfo::output> mSize;
 };
 
-constexpr char COMPONENT_NAME[] = "c2.google.avc.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.avc.decoder";
 
 static size_t getCpuCoreCount() {
     long cpuCoreCount = 1;

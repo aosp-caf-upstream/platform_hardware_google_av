@@ -105,7 +105,7 @@ C2FieldDescriptor::NamedValuesType C2FieldDescriptor::namedValuesFor(const name 
             prefix); \
 }
 
-#define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, type, names, ...) \
+#define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names) \
 template<> \
 C2FieldDescriptor::NamedValuesType C2FieldDescriptor::namedValuesFor(const name &r __unused) { \
     return _C2EnumUtils::customEnumValues( \
@@ -115,7 +115,7 @@ C2FieldDescriptor::NamedValuesType C2FieldDescriptor::namedValuesFor(const name 
 #else
 
 #define DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, ...)
-#define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, type, names, ...)
+#define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names)
 
 #endif
 
@@ -172,10 +172,10 @@ DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, __VA_ARGS__)
  * This macro must be used in the global scope and namespace.
  *
  *  ~~~~~~~~~~~~~ (.cpp)
- *  C2ENUM_CUSTOM_NAMES(SomeStruct::c2_enum_t, uint32_t, {
+ *  C2ENUM_CUSTOM_NAMES(SomeStruct::c2_enum_t, uint32_t, ({
  *      { "One", SomeStruct::C2_VALUE1 },
  *      { "Two", SomeStruct::C2_VALUE2 },
- *      { "Three", SomeStruct::C2_VALUE3 } },
+ *      { "Three", SomeStruct::C2_VALUE3 } }),
  *    C2_VALUE1,
  *    C2_VALUE2 = 5,
  *    C2_VALUE3 = C2_VALUE1 + 1)
@@ -185,7 +185,35 @@ DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, __VA_ARGS__)
  */
 #define C2ENUM_CUSTOM_NAMES(name, type, names, ...) \
 enum name : type { __VA_ARGS__ }; \
-DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, type, names, __VA_ARGS__)
+DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names)
+
+/**
+ * Make enums usable as their integral types.
+ */
+template<class E>
+struct C2EasyEnum {
+    using U = typename std::underlying_type<E>::type;
+    E value;
+    // define conversion functions
+    constexpr operator E() const { return value; }
+    inline constexpr C2EasyEnum(E value_) : value(value_) { }
+    inline constexpr C2EasyEnum(U value_) : value(E(value_)) { }
+    inline constexpr C2EasyEnum() = default;
+};
+
+// make C2EasyEnum behave like a regular enum
+
+namespace std {
+    template<typename E>
+    struct underlying_type<C2EasyEnum<E>> {
+        typedef typename underlying_type<E>::type type;
+    };
+
+    template<typename E>
+    struct is_enum<C2EasyEnum<E>> {
+        constexpr static bool value = true;
+    };
+}
 
 #endif  // C2ENUM_H_
 

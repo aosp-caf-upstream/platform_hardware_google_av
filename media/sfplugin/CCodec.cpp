@@ -150,6 +150,16 @@ public:
         }
     }
 
+    status_t signalEndOfInputStream() override {
+        C2InputSurfaceEosTuning eos(true);
+        std::vector<std::unique_ptr<C2SettingResult>> failures;
+        c2_status_t err = mSurface->getConfigurable()->config({&eos}, C2_MAY_BLOCK, &failures);
+        if (err != C2_OK) {
+            return UNKNOWN_ERROR;
+        }
+        return OK;
+    }
+
 private:
     std::shared_ptr<Codec2Client::InputSurface> mSurface;
     std::shared_ptr<Codec2Client::InputSurfaceConnection> mConnection;
@@ -199,6 +209,20 @@ public:
         source->onOmxIdle();
         source->onOmxLoaded();
         mNode.clear();
+    }
+
+    status_t signalEndOfInputStream() override {
+        binder::Status status = mSource->signalEndOfInputStream();
+        status_t err = OK;
+        if (status.isOk()) {
+            return OK;
+        } else if ((err = status.serviceSpecificErrorCode()) != OK) {
+            return err;
+        } else if ((err = status.transactionError()) != OK) {
+            return err;
+        } else {
+            return UNKNOWN_ERROR;
+        }
     }
 
 private:
@@ -261,6 +285,12 @@ struct CCodec::ClientListener : public Codec2Client::Listener {
             return;
         }
         codec->mCallback->onError(DEAD_OBJECT, ACTION_CODE_FATAL);
+    }
+
+    virtual void onFramesRendered(
+            const std::vector<RenderedFrame>& renderedFrames) override {
+        // TODO
+        (void)renderedFrames;
     }
 
 private:
@@ -408,6 +438,17 @@ void CCodec::configure(const sp<AMessage> &msg) {
             encoder = false;
         }
 
+        int32_t storeMeta;
+        if (encoder
+                && msg->findInt32("android._input-metadata-buffer-type", &storeMeta)
+                && storeMeta != kMetadataBufferTypeInvalid) {
+            if (storeMeta != kMetadataBufferTypeANWBuffer) {
+                ALOGD("Only ANW buffers are supported for legacy metadata mode");
+                return BAD_VALUE;
+            }
+            mChannel->setMetaMode(CCodecBufferChannel::MODE_ANW);
+        }
+
         // TODO: read from intf()
         if ((!encoder) != (comp->getName().find("encoder") == std::string::npos)) {
             return UNKNOWN_ERROR;
@@ -420,51 +461,59 @@ void CCodec::configure(const sp<AMessage> &msg) {
         }
 
         std::vector<std::unique_ptr<C2Param>> params;
+        C2StreamUsageTuning::input usage(0u);
         std::initializer_list<C2Param::Index> indices {
             C2PortMimeConfig::input::PARAM_TYPE,
             C2PortMimeConfig::output::PARAM_TYPE,
         };
         c2err = comp->query(
-                {},
+                {&usage},
                 indices,
                 C2_DONT_BLOCK,
                 &params);
-        if (c2err != C2_OK) {
+        if (c2err != C2_OK && c2err != C2_BAD_INDEX) {
             ALOGE("Failed to query component interface: %d", c2err);
             return UNKNOWN_ERROR;
         }
         if (params.size() != indices.size()) {
-            ALOGE("Component returns wrong number of params");
+            ALOGE("Component returns wrong number of params: expected %zu actual %zu",
+                    indices.size(), params.size());
             return UNKNOWN_ERROR;
         }
         if (!params[0] || !params[1]) {
             ALOGE("Component returns null params");
             return UNKNOWN_ERROR;
         }
+        if (!*params[0] || !*params[1]) {
+            ALOGE("Component returns invalid params");
+            return UNKNOWN_ERROR;
+        }
         inputFormat->setString("mime", ((C2PortMimeConfig *)params[0].get())->m.value);
         outputFormat->setString("mime", ((C2PortMimeConfig *)params[1].get())->m.value);
+        if (usage && (usage.value & C2MemoryUsage::CPU_READ)) {
+            inputFormat->setInt32("using-sw-read-often", true);
+        }
 
         // XXX: hack
         bool audio = mime.startsWithIgnoreCase("audio/");
         if (!audio) {
-            int32_t tmp;
-            if (msg->findInt32("width", &tmp)) {
-                inputFormat->setInt32("width", tmp);
-                outputFormat->setInt32("width", tmp);
-            }
-            if (msg->findInt32("height", &tmp)) {
-                inputFormat->setInt32("height", tmp);
-                outputFormat->setInt32("height", tmp);
+            int32_t width, height;
+            if (msg->findInt32("width", &width) && msg->findInt32("height", &height)) {
+                inputFormat->setInt32("width", width);
+                inputFormat->setInt32("height", height);
+                inputFormat->setRect("crop", 0, 0, width - 1, height - 1);
+                outputFormat->setInt32("width", width);
+                outputFormat->setInt32("height", height);
+                outputFormat->setRect("crop", 0, 0, width - 1, height - 1);
             }
         } else {
-            if (encoder) {
-                inputFormat->setInt32("channel-count", 1);
-                inputFormat->setInt32("sample-rate", 44100);
-                outputFormat->setInt32("channel-count", 1);
-                outputFormat->setInt32("sample-rate", 44100);
-            } else {
-                outputFormat->setInt32("channel-count", 2);
-                outputFormat->setInt32("sample-rate", 44100);
+            int32_t channelCount, sampleRate;
+            if (msg->findInt32("channel-count", &channelCount)
+                    && msg->findInt32("sample-rate", &sampleRate)) {
+                inputFormat->setInt32("channel-count", channelCount);
+                inputFormat->setInt32("sample-rate", sampleRate);
+                outputFormat->setInt32("channel-count", channelCount);
+                outputFormat->setInt32("sample-rate", sampleRate);
             }
         }
 
@@ -1034,8 +1083,7 @@ void CCodec::setParameters(const sp<AMessage> &unfiltered) {
 }
 
 void CCodec::signalEndOfInputStream() {
-    // TODO
-    mCallback->onSignaledInputEOS(INVALID_OPERATION);
+    mCallback->onSignaledInputEOS(mChannel->signalEndOfInputStream());
 }
 
 void CCodec::signalRequestIDRFrame() {
@@ -1121,7 +1169,7 @@ void CCodec::onMessageReceived(const sp<AMessage> &msg) {
                     (new AMessage(kWhatWorkDone, this))->post();
                 }
             }
-            mChannel->onWorkDone(work);
+            mChannel->onWorkDone(std::move(work));
             break;
         }
         default: {

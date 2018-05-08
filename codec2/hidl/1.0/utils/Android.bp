@@ -30,6 +30,7 @@ cc_library {
         "libhidltransport",
         "libhwbinder",
         "liblog",
+        "libstagefright_bufferpool@1.0",
         "libstagefright_bufferqueue_helper",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
@@ -44,6 +45,7 @@ cc_library {
     export_shared_lib_headers: [
         "hardware.google.media.c2@1.0",
         "libhidlbase",
+        "libstagefright_bufferpool@1.0",
         "libstagefright_codec2",
     ],
 }

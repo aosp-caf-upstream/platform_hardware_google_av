@@ -30,7 +30,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.amrwb.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.amrwb.encoder";
 
 class C2SoftAmrWbEnc::IntfImpl : public C2InterfaceHelper {
    public:

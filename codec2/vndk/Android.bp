@@ -32,6 +32,7 @@ cc_library_shared {
 
     export_shared_lib_headers: [
         "libbase",
+        "android.hardware.media.bufferpool@1.0",
     ],
 
     local_include_dirs: [

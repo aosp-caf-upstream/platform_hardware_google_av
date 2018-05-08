@@ -96,7 +96,7 @@ private:
     std::shared_ptr<C2BitrateTuning::output> mBitrate;
 };
 
-constexpr char COMPONENT_NAME[] = "c2.google.aac.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.aac.encoder";
 
 C2SoftAacEnc::C2SoftAacEnc(
         const char *name,

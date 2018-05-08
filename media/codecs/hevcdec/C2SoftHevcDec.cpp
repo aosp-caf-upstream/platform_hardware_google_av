@@ -32,7 +32,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.hevc.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.hevc.decoder";
 
 class C2SoftHevcDec::IntfImpl : public C2InterfaceHelper {
 public:

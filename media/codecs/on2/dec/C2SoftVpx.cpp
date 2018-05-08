@@ -30,9 +30,9 @@
 namespace android {
 
 #ifdef VP9
-constexpr char kComponentName[] = "c2.google.vp9.decoder";
+constexpr char kComponentName[] = "c2.android.vp9.decoder";
 #else
-constexpr char kComponentName[] = "c2.google.vp8.decoder";
+constexpr char kComponentName[] = "c2.android.vp8.decoder";
 #endif
 
 static std::shared_ptr<C2ComponentInterface> BuildIntf(

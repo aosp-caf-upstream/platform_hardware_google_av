@@ -28,7 +28,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.raw.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.raw.decoder";
 
 class C2SoftRaw::IntfImpl : public C2InterfaceHelper {
 public:

@@ -43,7 +43,10 @@ public:
      */
     virtual void disconnect() = 0;
 
-    // TODO: intf()
+    /**
+     * Ref: GraphicBufferSource::signalEndOfInputStream.
+     */
+    virtual status_t signalEndOfInputStream() = 0;
 };
 
 }  // namespace android

@@ -118,7 +118,7 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
         //         C2AndroidMemoryUsage(C2MemoryUsage(usage.value)).
         //         asGrallocUsage();
         uint32_t grallocUsage =
-                strncmp(intf->getName().c_str(), "c2.google.", 10) == 0 ?
+                strncmp(intf->getName().c_str(), "c2.android.", 11) == 0 ?
                 GRALLOC_USAGE_SW_READ_OFTEN :
                 GRALLOC_USAGE_HW_VIDEO_ENCODER;
 
@@ -211,31 +211,18 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
             return UNKNOWN_ERROR;
         }
 
-        mLastTimestamp.store(timestamp, std::memory_order_relaxed);
-
         return OK;
     }
 
     virtual status_t submitEos(int32_t /* bufferId */) override {
+        ALOGV("Impl::submitEos");
         std::shared_ptr<C2Component> comp = mComp.lock();
         if (!comp) {
             ALOGW("Impl::submitEos -- component died.");
             return NO_INIT;
         }
 
-        std::unique_ptr<C2Work> work(new C2Work);
-        work->input.flags = C2FrameData::FLAG_END_OF_STREAM;
-        work->input.ordinal.timestamp = mLastTimestamp.load(
-                std::memory_order_relaxed);
-        work->input.ordinal.frameIndex = mFrameIndex.fetch_add(
-                1, std::memory_order_relaxed);
-        work->input.buffers.clear();
-        work->worklets.clear();
-        work->worklets.emplace_back(new C2Worklet);
-        std::list<std::unique_ptr<C2Work>> items;
-        items.push_back(std::move(work));
-
-        c2_status_t err = comp->queue_nb(&items);
+        c2_status_t err = comp->drain_nb(C2Component::DRAIN_COMPONENT_WITH_EOS);
         return (err == C2_OK) ? OK : UNKNOWN_ERROR;
     }
 
@@ -254,7 +241,6 @@ private:
     // Needed for ComponentWrapper implementation
     std::mutex mAllocatorMutex;
     std::shared_ptr<C2Allocator> mAllocator;
-    std::atomic_int64_t mLastTimestamp;
     std::atomic_uint64_t mFrameIndex;
 };
 

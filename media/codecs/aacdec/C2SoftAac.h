@@ -82,13 +82,11 @@ private:
     void drainRingBuffer(
             const std::unique_ptr<C2Work> &work,
             const std::shared_ptr<C2BlockPool> &pool,
-            std::vector<std::unique_ptr<C2Param>> *configUpdate,
             bool eos);
     c2_status_t drainInternal(
             uint32_t drainMode,
             const std::shared_ptr<C2BlockPool> &pool,
-            const std::unique_ptr<C2Work> &work,
-            std::vector<std::unique_ptr<C2Param>> *configUpdate = nullptr);
+            const std::unique_ptr<C2Work> &work);
 
 //      delay compensation
     bool mEndOfInput;
