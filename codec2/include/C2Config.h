@@ -371,8 +371,9 @@ enum : uint32_t {
     _C2_PL_AVC_BASE  = 0x5000,
     _C2_PL_HEVC_BASE = 0x6000,
     _C2_PL_VP9_BASE  = 0x7000,
+    _C2_PL_DV_BASE   = 0x8000,
 
-    C2_COMPONENT_PROFILE_LEVEL_VENDOR_START = 0x70000000,
+    C2_PROFILE_LEVEL_VENDOR_START = 0x70000000,
 };
 
 }
@@ -506,6 +507,18 @@ enum C2Config::profile_t : uint32_t {
     PROFILE_VP9_1,                              ///< VP9 Profile 1 (4:2:2 or 4:4:4)
     PROFILE_VP9_2,                              ///< VP9 Profile 2 (4:2:0, 10 or 12 bit)
     PROFILE_VP9_3,                              ///< VP9 Profile 3 (4:2:2 or 4:4:4, 10 or 12 bit)
+
+    // Dolby Vision profiles
+    PROFILE_DV_AV_PER = _C2_PL_DV_BASE + 0,     ///< Dolby Vision dvav.per profile (deprecated)
+    PROFILE_DV_AV_PEN,                          ///< Dolby Vision dvav.pen profile (deprecated)
+    PROFILE_DV_HE_DER,                          ///< Dolby Vision dvhe.der profile (deprecated)
+    PROFILE_DV_HE_DEN,                          ///< Dolby Vision dvhe.den profile (deprecated)
+    PROFILE_DV_HE_04 = _C2_PL_DV_BASE + 4,      ///< Dolby Vision dvhe.04 profile
+    PROFILE_DV_HE_05 = _C2_PL_DV_BASE + 5,      ///< Dolby Vision dvhe.05 profile
+    PROFILE_DV_HE_DTH,                          ///< Dolby Vision dvhe.dth profile (deprecated)
+    PROFILE_DV_HE_07 = _C2_PL_DV_BASE + 7,      ///< Dolby Vision dvhe.07 profile
+    PROFILE_DV_HE_08 = _C2_PL_DV_BASE + 8,      ///< Dolby Vision dvhe.08 profile
+    PROFILE_DV_AV_09 = _C2_PL_DV_BASE + 9,      ///< Dolby Vision dvav.09 profile
 };
 
 enum C2Config::level_t : uint32_t {
@@ -598,6 +611,27 @@ enum C2Config::level_t : uint32_t {
     LEVEL_VP9_6,                                ///< VP9 Level 6
     LEVEL_VP9_6_1,                              ///< VP9 Level 6.1
     LEVEL_VP9_6_2,                              ///< VP9 Level 6.2
+
+    // Dolby Vision level
+    LEVEL_DV_MAIN_HD_24 = _C2_PL_DV_BASE,       ///< Dolby Vision main tier hd24
+    LEVEL_DV_MAIN_HD_30,                        ///< Dolby Vision main tier hd30
+    LEVEL_DV_MAIN_FHD_24,                       ///< Dolby Vision main tier fhd24
+    LEVEL_DV_MAIN_FHD_30,                       ///< Dolby Vision main tier fhd30
+    LEVEL_DV_MAIN_FHD_60,                       ///< Dolby Vision main tier fhd60
+    LEVEL_DV_MAIN_UHD_24,                       ///< Dolby Vision main tier uhd24
+    LEVEL_DV_MAIN_UHD_30,                       ///< Dolby Vision main tier uhd30
+    LEVEL_DV_MAIN_UHD_48,                       ///< Dolby Vision main tier uhd48
+    LEVEL_DV_MAIN_UHD_60,                       ///< Dolby Vision main tier uhd60
+
+    LEVEL_DV_HIGH_HD_24 = _C2_PL_DV_BASE + 0x100,  ///< Dolby Vision high tier hd24
+    LEVEL_DV_HIGH_HD_30,                        ///< Dolby Vision high tier hd30
+    LEVEL_DV_HIGH_FHD_24,                       ///< Dolby Vision high tier fhd24
+    LEVEL_DV_HIGH_FHD_30,                       ///< Dolby Vision high tier fhd30
+    LEVEL_DV_HIGH_FHD_60,                       ///< Dolby Vision high tier fhd60
+    LEVEL_DV_HIGH_UHD_24,                       ///< Dolby Vision high tier uhd24
+    LEVEL_DV_HIGH_UHD_30,                       ///< Dolby Vision high tier uhd30
+    LEVEL_DV_HIGH_UHD_48,                       ///< Dolby Vision high tier uhd48
+    LEVEL_DV_HIGH_UHD_60,                       ///< Dolby Vision high tier uhd60
 };
 
 struct C2ProfileLevelStruct {
@@ -612,7 +646,8 @@ struct C2ProfileLevelStruct {
 // TODO: may need to make this explicit (have .set member)
 typedef C2StreamParam<C2Info, C2ProfileLevelStruct, kParamIndexProfileLevel>
         C2StreamProfileLevelInfo;
-constexpr char C2_PARAMKEY_STREAM_PROFILE_LEVEL[] = "coded.pl";
+constexpr char C2_PARAMKEY_PROFILE_LEVEL[] = "coded.pl";
+#define C2_PARAMKEY_STREAM_PROFILE_LEVEL C2_PARAMKEY_PROFILE_LEVEL
 
 /**
  * Codec-specific initialization data.
@@ -625,7 +660,8 @@ constexpr char C2_PARAMKEY_STREAM_PROFILE_LEVEL[] = "coded.pl";
  */
 typedef C2StreamParam<C2Info, C2BlobValue, kParamIndexInitData> C2StreamInitDataInfo;
 typedef C2StreamInitDataInfo C2StreamCsdInfo; // deprecated
-constexpr char C2_PARAMKEY_STREAM_INIT_DATA[] = "coded.init-data";
+constexpr char C2_PARAMKEY_INIT_DATA[] = "coded.init-data";
+#define C2_PARAMKEY_STREAM_INIT_DATA C2_PARAMKEY_INIT_DATA
 
 /**
  * Supplemental Data.
@@ -1139,11 +1175,12 @@ constexpr char C2_PARAMKEY_PREPEND_HEADER_MODE[] = "output.buffers.prepend-heade
 typedef C2PictureSizeStruct C2VideoSizeStruct; // deprecated
 
 typedef C2StreamParam<C2Info, C2PictureSizeStruct, kParamIndexPictureSize> C2StreamPictureSizeInfo;
-constexpr char C2_PARAMKEY_STREAM_PICTURE_SIZE[] = "raw.size";
-#define C2_NAME_STREAM_VIDEO_SIZE_INFO C2_PARAMKEY_STREAM_PICTURE_SIZE
+constexpr char C2_PARAMKEY_PICTURE_SIZE[] = "raw.size";
+#define C2_PARAMKEY_STREAM_PICTURE_SIZE C2_PARAMKEY_PICTURE_SIZE
+#define C2_NAME_STREAM_VIDEO_SIZE_INFO C2_PARAMKEY_PICTURE_SIZE
 typedef C2StreamPictureSizeInfo C2VideoSizeStreamInfo; // deprecated
 typedef C2StreamPictureSizeInfo C2VideoSizeStreamTuning; // deprecated
-#define C2_NAME_STREAM_VIDEO_SIZE_SETTING C2_PARAMKEY_STREAM_PICTURE_SIZE
+#define C2_NAME_STREAM_VIDEO_SIZE_SETTING C2_PARAMKEY_PICTURE_SIZE
 
 /**
  * Crop rectangle.
@@ -1200,11 +1237,13 @@ C2ENUM(C2Config::scaling_method_t, uint32_t,
 typedef C2StreamParam<C2Tuning, C2SimpleValueStruct<C2Config::scaling_method_t>,
                 kParamIndexScalingMethod>
         C2StreamScalingMethodTuning;
-constexpr char C2_PARAMKEY_STREAM_SCALING_MODE[] = "raw.scaling-method";
+constexpr char C2_PARAMKEY_SCALING_MODE[] = "raw.scaling-method";
+#define C2_PARAMKEY_STREAM_SCALING_MODE C2_PARAMKEY_SCALING_MODE
 
 typedef C2StreamParam<C2Tuning, C2PictureSizeStruct, kParamIndexScaledPictureSize>
         C2StreamScaledPictureSizeTuning;
-constexpr char C2_PARAMKEY_STREAM_SCALED_PICTURE_SIZE[] = "raw.scaled-size";
+constexpr char C2_PARAMKEY_SCALED_PICTURE_SIZE[] = "raw.scaled-size";
+#define C2_PARAMKEY_STREAM_SCALED_PICTURE_SIZE C2_PARAMKEY_SCALED_PICTURE_SIZE
 
 typedef C2StreamParam<C2Tuning, C2RectStruct, kParamIndexScaledCropRect>
         C2StreamScaledCropRectTuning;

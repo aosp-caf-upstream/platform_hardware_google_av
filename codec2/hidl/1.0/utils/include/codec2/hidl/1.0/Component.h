@@ -24,8 +24,8 @@
 #include <hardware/google/media/c2/1.0/IComponentListener.h>
 #include <hardware/google/media/c2/1.0/IComponentStore.h>
 #include <hardware/google/media/c2/1.0/IComponent.h>
-#include <hidl/MQDescriptor.h>
 #include <hidl/Status.h>
+#include <hwbinder/IBinder.h>
 
 #include <C2Component.h>
 #include <C2Buffer.h>
@@ -48,6 +48,7 @@ using ::android::hardware::hidl_string;
 using ::android::hardware::hidl_vec;
 using ::android::hardware::Return;
 using ::android::hardware::Void;
+using ::android::hardware::IBinder;
 using ::android::sp;
 using ::android::wp;
 
@@ -115,13 +116,13 @@ protected:
 
     struct CompareRawPointer {
         constexpr bool operator()(
-                const wp<IComponent>& x, const wp<IComponent>& y) const {
-            return std::less<IComponent*>()(x.unsafe_get(), y.unsafe_get());
+                const wp<IBinder>& x, const wp<IBinder>& y) const {
+            return std::less<IBinder*>()(x.unsafe_get(), y.unsafe_get());
         }
     };
 
     // Component lifetime management
-    typedef std::map<wp<IComponent>, std::weak_ptr<C2Component>,
+    typedef std::map<wp<IBinder>, std::weak_ptr<C2Component>,
             CompareRawPointer> Roster;
     typedef Roster::const_iterator LocalId;
     LocalId mLocalId;
