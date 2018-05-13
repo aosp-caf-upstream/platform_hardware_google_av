@@ -781,9 +781,11 @@ Status objcpy(FrameData* d, const C2FrameData& s,
     for (const std::shared_ptr<C2Buffer>& sBuffer : s.buffers) {
         Buffer& dBuffer = d->buffers[i++];
         if (!sBuffer) {
-            // TODO: this should be okay
-            ALOGE("Null C2Buffer");
-            return Status::BAD_VALUE;
+            // A null (pointer to) C2Buffer corresponds to a Buffer with empty
+            // info and blocks.
+            dBuffer.info.resize(0);
+            dBuffer.blocks.resize(0);
+            continue;
         }
         status = objcpy(
                 &dBuffer, *sBuffer,
@@ -1082,8 +1084,10 @@ c2_status_t objcpy(std::shared_ptr<C2Buffer>* d, const Buffer& s,
     c2_status_t status;
     *d = nullptr;
 
-    // Currently, a C2Buffer must contain exactly 1 block.
-    if (s.blocks.size() != 1) {
+    // Currently, a non-null C2Buffer must contain exactly 1 block.
+    if (s.blocks.size() == 0) {
+        return C2_OK;
+    } else if (s.blocks.size() != 1) {
         ALOGE("Currently, a C2Buffer must contain exactly 1 block.");
         return C2_BAD_VALUE;
     }
