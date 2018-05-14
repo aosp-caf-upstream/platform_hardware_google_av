@@ -1016,12 +1016,20 @@ public:
     ~RawGraphicOutputBuffers() override = default;
 
     sp<Codec2Buffer> wrap(const std::shared_ptr<C2Buffer> &buffer) override {
-        return ConstGraphicBlockBuffer::Allocate(
-                mFormat,
-                buffer,
-                [lbp = mLocalBufferPool](size_t capacity) {
-                    return lbp->newBuffer(capacity);
-                });
+        if (buffer == nullptr) {
+            return ConstGraphicBlockBuffer::AllocateEmpty(
+                    mFormat,
+                    [lbp = mLocalBufferPool](size_t capacity) {
+                        return lbp->newBuffer(capacity);
+                    });
+        } else {
+            return ConstGraphicBlockBuffer::Allocate(
+                    mFormat,
+                    buffer,
+                    [lbp = mLocalBufferPool](size_t capacity) {
+                        return lbp->newBuffer(capacity);
+                    });
+        }
     }
 
     sp<Codec2Buffer> allocateArrayBuffer() override {

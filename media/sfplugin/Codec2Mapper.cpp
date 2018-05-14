@@ -449,7 +449,7 @@ struct Vp9ProfileLevelMapper : ProfileLevelMapperHelper {
 
 // static
 std::shared_ptr<C2Mapper::ProfileLevelMapper>
-C2Mapper::getProfileLevelMapper(std::string mediaType) {
+C2Mapper::GetProfileLevelMapper(std::string mediaType) {
     std::transform(mediaType.begin(), mediaType.begin(), mediaType.end(), ::tolower);
     if (mediaType == MIMETYPE_AUDIO_AAC) {
         return std::make_shared<AacProfileLevelMapper>();

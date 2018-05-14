@@ -638,6 +638,11 @@ struct C2ProfileLevelStruct {
     C2Config::profile_t profile;  ///< coding profile
     C2Config::level_t   level;    ///< coding level
 
+    C2ProfileLevelStruct(
+            C2Config::profile_t profile_ = C2Config::PROFILE_UNUSED,
+            C2Config::level_t level_ = C2Config::LEVEL_UNUSED)
+        : profile(profile_), level(level_) { }
+
     DEFINE_AND_DESCRIBE_C2STRUCT(ProfileLevel)
     C2FIELD(profile, "profile")
     C2FIELD(level,   "level")
@@ -996,7 +1001,7 @@ constexpr char C2_PARAMKEY_OUTPUT_MAX_BUFFER_SIZE[] = "output.buffers.max-size";
  * interface operations, as well as to allow client to trip the component on demand.
  */
 typedef C2GlobalParam<C2Tuning, C2BoolValue, kParamIndexTripped>
-        C2TrippedTunning;
+        C2TrippedTuning;
 constexpr char C2_PARAMKEY_TRIPPED[] = "algo.tripped";
 
 /**
@@ -1301,6 +1306,25 @@ struct C2ColorInfoStruct {
     C2Color::subsampling_t subsampling;
     C2ChromaOffsetStruct locations[]; // max 2 elements
 
+    C2ColorInfoStruct(
+            size_t /* flexCount */, uint32_t bitDepth_, C2Color::subsampling_t subsampling_)
+        : bitDepth(bitDepth_), subsampling(subsampling_) {
+    }
+
+    C2ColorInfoStruct(
+            size_t flexCount, uint32_t bitDepth_, C2Color::subsampling_t subsampling_,
+            std::initializer_list<C2ChromaOffsetStruct> locations_)
+        : bitDepth(bitDepth_), subsampling(subsampling_) {
+        size_t ix = 0;
+        for (const C2ChromaOffsetStruct &location : locations_) {
+            if (ix == flexCount) {
+                break;
+            }
+            locations[ix] = location;
+            ++ix;
+        }
+    }
+
     DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(ColorInfo, locations)
     C2FIELD(bitDepth, "bit-depth")
     C2FIELD(subsampling, "subsampling")
@@ -1382,6 +1406,11 @@ struct C2ColorAspectsStruct {
     C2Color::primaries_t primaries;
     C2Color::transfer_t transfer;
     C2Color::matrix_t matrix;
+
+    C2ColorAspectsStruct() = default;
+    C2ColorAspectsStruct(C2Color::range_t range_, C2Color::primaries_t primaries_,
+                         C2Color::transfer_t transfer_, C2Color::matrix_t matrix_)
+        : range(range_), primaries(primaries_), transfer(transfer_), matrix(matrix_) {}
 
     DEFINE_AND_DESCRIBE_C2STRUCT(ColorAspects)
     C2FIELD(range, "range")
