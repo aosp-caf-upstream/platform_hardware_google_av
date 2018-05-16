@@ -35,7 +35,8 @@ namespace android {
             virtual ~ProfileLevelMapper() = default;
         };
 
-        static std::shared_ptr<ProfileLevelMapper> getProfileLevelMapper(std::string mediaType);
+        static std::shared_ptr<ProfileLevelMapper>
+        GetProfileLevelMapper(std::string mediaType);
 
         // convert between bitrates
         static bool map(C2Config::bitrate_mode_t, int32_t*);

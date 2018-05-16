@@ -1198,24 +1198,34 @@ public: \
     enum : uint32_t { CORE_INDEX = kParamIndex##name | C2Param::CoreIndex::IS_FLEX_FLAG }; \
     DEFINE_BASE_C2STRUCT(name)
 
-#ifdef __C2_GENERATE_GLOBAL_VARS__
 /// \ingroup internal
 /// Describe a structure of a templated structure.
-#define DESCRIBE_TEMPLATED_C2STRUCT(strukt, list) \
-    template<> \
-    const std::vector<C2FieldDescriptor> strukt::FieldList() { return list; }
+// Use list... as the argument gets resubsitituted and it contains commas. Alternative would be
+// to wrap list in an expression, e.g. ({ std::vector<C2FieldDescriptor> list; })) which converts
+// it from an initializer list to a vector.
+#define DESCRIBE_TEMPLATED_C2STRUCT(strukt, list...) \
+    _DESCRIBE_TEMPLATABLE_C2STRUCT(template<>, strukt, __C2_GENERATE_GLOBAL_VARS__, list)
 
 /// \deprecated
 /// Describe the fields of a structure using an initializer list.
-#define DESCRIBE_C2STRUCT(name, list) \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return list; }
+#define DESCRIBE_C2STRUCT(name, list...) \
+    _DESCRIBE_TEMPLATABLE_C2STRUCT(, C2##name##Struct, __C2_GENERATE_GLOBAL_VARS__, list)
 
-#else
-/// \if 0
-#define DESCRIBE_TEMPLATED_C2STRUCT(strukt, list)
-#define DESCRIBE_C2STRUCT(name, list)
-/// \endif
-#endif
+/// \ingroup internal
+/// Macro layer to get value of enabled that is passed in as a macro variable
+#define _DESCRIBE_TEMPLATABLE_C2STRUCT(template, strukt, enabled, list...) \
+    __DESCRIBE_TEMPLATABLE_C2STRUCT(template, strukt, enabled, list)
+
+/// \ingroup internal
+/// Macro layer to resolve to the specific macro based on macro variable
+#define __DESCRIBE_TEMPLATABLE_C2STRUCT(template, strukt, enabled, list...) \
+    ___DESCRIBE_TEMPLATABLE_C2STRUCT##enabled(template, strukt, list)
+
+#define ___DESCRIBE_TEMPLATABLE_C2STRUCT(template, strukt, list...) \
+    template \
+    const std::vector<C2FieldDescriptor> strukt::FieldList() { return list; }
+
+#define ___DESCRIBE_TEMPLATABLE_C2STRUCT__C2_GENERATE_GLOBAL_VARS__(template, strukt, list...)
 
 /**
  * Describe a field of a structure.
@@ -1298,61 +1308,67 @@ public: \
 #define DESCRIBE_C2FIELD(member, name) \
   C2FieldDescriptor(&((_type*)(nullptr))->member, name),
 
-#ifdef __C2_GENERATE_GLOBAL_VARS__
-#define C2FIELD(member, name) DESCRIBE_C2FIELD(member, name)
-
-/// Define a structure with matching CORE_INDEX and start describing its fields.
-/// This must be at the end of the structure definition.
-#define DEFINE_AND_DESCRIBE_C2STRUCT(name) \
-    DEFINE_C2STRUCT(name) } C2_PACK; \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return _FIELD_LIST; } \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::_FIELD_LIST = {
-
-/// Define a flexible structure with matching CORE_INDEX and start describing its fields.
-/// This must be at the end of the structure definition.
-#define DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember) \
-    DEFINE_FLEX_C2STRUCT(name, flexMember) } C2_PACK; \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return _FIELD_LIST; } \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::_FIELD_LIST = {
-
-/// Define a base structure (with no CORE_INDEX) and start describing its fields.
-/// This must be at the end of the structure definition.
-#define DEFINE_AND_DESCRIBE_BASE_C2STRUCT(name) \
-    DEFINE_BASE_C2STRUCT(name) } C2_PACK; \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return _FIELD_LIST; } \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::_FIELD_LIST = {
-
-/// Define a flexible base structure (with no CORE_INDEX) and start describing its fields.
-/// This must be at the end of the structure definition.
-#define DEFINE_AND_DESCRIBE_BASE_FLEX_C2STRUCT(name, flexMember) \
-    DEFINE_BASE_FLEX_C2STRUCT(name, flexMember) } C2_PACK; \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return _FIELD_LIST; } \
-    const std::vector<C2FieldDescriptor> C2##name##Struct::_FIELD_LIST = {
-
-#else
+#define C2FIELD(member, name) _C2FIELD(member, name, __C2_GENERATE_GLOBAL_VARS__)
 /// \if 0
-/* Alternate declaration of field definitions in case no field list is to be generated.
-   TRICKY: use namespace declaration to handle closing bracket that is normally after
-   these macros. */
-#define C2FIELD(member, name)
+#define _C2FIELD(member, name, enabled) __C2FIELD(member, name, enabled)
+#define __C2FIELD(member, name, enabled) DESCRIBE_C2FIELD##enabled(member, name)
+#define DESCRIBE_C2FIELD__C2_GENERATE_GLOBAL_VARS__(member, name)
+/// \endif
+
 /// Define a structure with matching CORE_INDEX and start describing its fields.
 /// This must be at the end of the structure definition.
 #define DEFINE_AND_DESCRIBE_C2STRUCT(name) \
-    DEFINE_C2STRUCT(name) }  C2_PACK; namespace {
-/// Define a flexible structure with matching CORE_INDEX and start describing its fields.
-/// This must be at the end of the structure definition.
-#define DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember) \
-    DEFINE_FLEX_C2STRUCT(name, flexMember) } C2_PACK; namespace {
+    _DEFINE_AND_DESCRIBE_C2STRUCT(name, DEFINE_C2STRUCT, __C2_GENERATE_GLOBAL_VARS__)
+
 /// Define a base structure (with no CORE_INDEX) and start describing its fields.
 /// This must be at the end of the structure definition.
 #define DEFINE_AND_DESCRIBE_BASE_C2STRUCT(name) \
-    DEFINE_BASE_C2STRUCT(name) } C2_PACK; namespace {
+    _DEFINE_AND_DESCRIBE_C2STRUCT(name, DEFINE_BASE_C2STRUCT, __C2_GENERATE_GLOBAL_VARS__)
+
+/// Define a flexible structure with matching CORE_INDEX and start describing its fields.
+/// This must be at the end of the structure definition.
+#define DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember) \
+    _DEFINE_AND_DESCRIBE_FLEX_C2STRUCT( \
+            name, flexMember, DEFINE_FLEX_C2STRUCT, __C2_GENERATE_GLOBAL_VARS__)
+
 /// Define a flexible base structure (with no CORE_INDEX) and start describing its fields.
 /// This must be at the end of the structure definition.
 #define DEFINE_AND_DESCRIBE_BASE_FLEX_C2STRUCT(name, flexMember) \
-    DEFINE_BASE_FLEX_C2STRUCT(name, flexMember) } C2_PACK; namespace {
+    _DEFINE_AND_DESCRIBE_FLEX_C2STRUCT( \
+            name, flexMember, DEFINE_BASE_FLEX_C2STRUCT, __C2_GENERATE_GLOBAL_VARS__)
+
+/// \if 0
+/*
+   Alternate declaration of field definitions in case no field list is to be generated.
+   The specific macro is chosed based on the value of __C2_GENERATE_GLOBAL_VARS__ (whether it is
+   defined (to be empty) or not. This requires two level of macro substitution.
+   TRICKY: use namespace declaration to handle closing bracket that is normally after
+   these macros.
+*/
+
+#define _DEFINE_AND_DESCRIBE_C2STRUCT(name, defineMacro, enabled) \
+    __DEFINE_AND_DESCRIBE_C2STRUCT(name, defineMacro, enabled)
+#define __DEFINE_AND_DESCRIBE_C2STRUCT(name, defineMacro, enabled) \
+    ___DEFINE_AND_DESCRIBE_C2STRUCT##enabled(name, defineMacro)
+#define ___DEFINE_AND_DESCRIBE_C2STRUCT__C2_GENERATE_GLOBAL_VARS__(name, defineMacro) \
+    defineMacro(name) } C2_PACK; namespace {
+#define ___DEFINE_AND_DESCRIBE_C2STRUCT(name, defineMacro) \
+    defineMacro(name) } C2_PACK; \
+    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return _FIELD_LIST; } \
+    const std::vector<C2FieldDescriptor> C2##name##Struct::_FIELD_LIST = {
+
+#define _DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember, defineMacro, enabled) \
+    __DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember, defineMacro, enabled)
+#define __DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember, defineMacro, enabled) \
+    ___DEFINE_AND_DESCRIBE_FLEX_C2STRUCT##enabled(name, flexMember, defineMacro)
+#define ___DEFINE_AND_DESCRIBE_FLEX_C2STRUCT__C2_GENERATE_GLOBAL_VARS__(name, flexMember, defineMacro) \
+    defineMacro(name, flexMember) } C2_PACK; namespace {
+#define ___DEFINE_AND_DESCRIBE_FLEX_C2STRUCT(name, flexMember, defineMacro) \
+    defineMacro(name, flexMember) } C2_PACK; \
+    const std::vector<C2FieldDescriptor> C2##name##Struct::FieldList() { return _FIELD_LIST; } \
+    const std::vector<C2FieldDescriptor> C2##name##Struct::_FIELD_LIST = {
 /// \endif
-#endif
+
 
 /**
  * Parameter reflector class.

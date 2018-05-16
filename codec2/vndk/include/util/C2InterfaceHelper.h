@@ -255,6 +255,10 @@ public:
          */
         C2ParamFieldValuesBuilder<T> mustBe();
 
+        operator C2ParamField() const {
+            return _mField;
+        }
+
         // TODO
         C2R validatePossible(const T &value __unused) const {
             /// TODO
@@ -720,7 +724,9 @@ protected:
 #define C2F(spParam, field) \
     C2ParamFieldValuesBuilder< \
             typename _c2_reduce_enum_to_underlying_type< \
-                    typename std::remove_extent<decltype(spParam->field)>::type>::type>( \
-                            C2ParamField(spParam.get(), &spParam->field))
+                    typename std::remove_reference< \
+                            typename std::remove_extent< \
+                                    decltype(spParam->field)>::type>::type>::type>( \
+                                            C2ParamField(spParam.get(), &spParam->field))
 
 #endif  // C2UTILS_INTERFACE_HELPER_H_
