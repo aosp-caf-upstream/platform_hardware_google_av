@@ -26,8 +26,10 @@
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/AUtils.h>
 #include <media/stagefright/MediaDefs.h>
+
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
+#include <util/C2InterfaceHelper.h>
 #include <inttypes.h>
 
 #include "C2SoftMpeg4Enc.h"
@@ -36,46 +38,112 @@
 namespace android {
 
 #ifdef MPEG4
-constexpr char kComponentName[] = "c2.google.mpeg4.encoder";
-#define CODEC_WIDTH    720
-#define CODEC_HEIGHT   480
-#define CODEC_BITRATE      216000
-#define CODEC_FRAMERATE    17
+constexpr char COMPONENT_NAME[] = "c2.google.mpeg4.encoder";
 #else
-constexpr char kComponentName[] = "c2.google.h263.encoder";
-#define CODEC_WIDTH    176
-#define CODEC_HEIGHT   144
-#define CODEC_BITRATE      128000
-#define CODEC_FRAMERATE    15
+constexpr char COMPONENT_NAME[] = "c2.google.h263.encoder";
 #endif
 
-std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatVideo)
-            .outputFormat(C2FormatCompressed)
-            .inputMediaType(MEDIA_MIMETYPE_VIDEO_RAW)
-            .outputMediaType(
+class C2SoftMpeg4Enc::IntfImpl : public C2InterfaceHelper {
+   public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper>& helper)
+        : C2InterfaceHelper(helper) {
+        setDerivedInstance(this);
+
+        addParameter(
+            DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(
+                    new C2StreamFormatConfig::input(0u, C2FormatVideo))
+                .build());
+
+        addParameter(
+            DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(
+                    new C2StreamFormatConfig::output(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+            DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                    MEDIA_MIMETYPE_VIDEO_RAW))
+                .build());
+
+        addParameter(
+            DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
 #ifdef MPEG4
                     MEDIA_MIMETYPE_VIDEO_MPEG4
 #else
                     MEDIA_MIMETYPE_VIDEO_H263
 #endif
-            )
-            .build();
-}
+                    ))
+                .build());
 
-C2SoftMpeg4Enc::C2SoftMpeg4Enc(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+        addParameter(DefineParam(mUsage, C2_NAME_INPUT_STREAM_USAGE_SETTING)
+                         .withConstValue(new C2StreamUsageTuning::input(
+                             0u, (uint64_t)C2MemoryUsage::CPU_READ))
+                         .build());
+
+        addParameter(
+            DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_SETTING)
+                .withDefault(new C2VideoSizeStreamTuning::input(0u, 176, 144))
+                .withFields({
+                    C2F(mSize, width).inRange(16, 176, 16),
+                    C2F(mSize, height).inRange(16, 144, 16),
+                })
+                .withSetter(SizeSetter)
+                .build());
+
+        addParameter(
+            DefineParam(mFrameRate, C2_NAME_STREAM_FRAME_RATE_SETTING)
+                .withDefault(new C2StreamFrameRateInfo::output(0u, 17.))
+                // TODO: More restriction?
+                .withFields({C2F(mFrameRate, value).greaterThan(0.)})
+                .withSetter(
+                    Setter<decltype(*mFrameRate)>::StrictValueWithNoDeps)
+                .build());
+
+        addParameter(
+            DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::output(0u, 64000))
+                .withFields({C2F(mBitrate, value).inRange(1, 12000000)})
+                .withSetter(
+                    Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
+
+    static C2R SizeSetter(bool mayBlock,
+                          C2P<C2VideoSizeStreamTuning::input>& me) {
+        (void)mayBlock;
+        // TODO: maybe apply block limit?
+        return me.F(me.v.width)
+            .validatePossible(me.v.width)
+            .plus(me.F(me.v.height).validatePossible(me.v.height));
+    }
+
+    uint32_t getWidth() const { return mSize->width; }
+    uint32_t getHeight() const { return mSize->height; }
+    float getFrameRate() const { return mFrameRate->value; }
+    uint32_t getBitrate() const { return mBitrate->value; }
+
+   private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamUsageTuning::input> mUsage;
+    std::shared_ptr<C2VideoSizeStreamTuning::input> mSize;
+    std::shared_ptr<C2StreamFrameRateInfo::output> mFrameRate;
+    std::shared_ptr<C2BitrateTuning::output> mBitrate;
+};
+
+C2SoftMpeg4Enc::C2SoftMpeg4Enc(const char* name, c2_node_id_t id,
+                               const std::shared_ptr<IntfImpl>& intfImpl)
+    : SimpleC2Component(
+          std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mHandle(nullptr),
       mEncParams(nullptr),
       mStarted(false),
-      mWidth(CODEC_WIDTH),
-      mHeight(CODEC_HEIGHT),
-      mFramerate(CODEC_FRAMERATE),
-      mBitrate(CODEC_BITRATE),
       mOutBufferSize(524288),
       mKeyFrameInterval(10) {
 }
@@ -217,15 +285,15 @@ c2_status_t C2SoftMpeg4Enc::initEncParams() {
         return C2_CORRUPTED;
     }
 
-    if (mFramerate == 0) {
+    if (mIntf->getFrameRate() == 0) {
         ALOGE("Framerate should not be 0");
         return C2_BAD_VALUE;
     }
 
     mEncParams->encMode = mEncodeMode;
-    mEncParams->encWidth[0] = mWidth;
-    mEncParams->encHeight[0] = mHeight;
-    mEncParams->encFrameRate[0] = mFramerate;
+    mEncParams->encWidth[0] = mIntf->getWidth();
+    mEncParams->encHeight[0] = mIntf->getHeight();
+    mEncParams->encFrameRate[0] = mIntf->getFrameRate();
     mEncParams->rcType = VBR_1;
     mEncParams->vbvDelay = 5.0f;
 
@@ -234,17 +302,17 @@ c2_status_t C2SoftMpeg4Enc::initEncParams() {
     mEncParams->rvlcEnable = PV_OFF;
     mEncParams->numLayers = 1;
     mEncParams->timeIncRes = 1000;
-    mEncParams->tickPerSrc = mEncParams->timeIncRes / mFramerate;
-
-    mEncParams->bitRate[0] = mBitrate;
+    mEncParams->tickPerSrc = mEncParams->timeIncRes / mIntf->getFrameRate();
+    mEncParams->bitRate[0] = mIntf->getBitrate();
     mEncParams->iQuant[0] = 15;
     mEncParams->pQuant[0] = 12;
     mEncParams->quantType[0] = 0;
     mEncParams->noFrameSkipped = PV_OFF;
 
     // PV's MPEG4 encoder requires the video dimension of multiple
-    if (mWidth % 16 != 0 || mHeight % 16 != 0) {
-        ALOGE("Video frame size %dx%d must be a multiple of 16", mWidth, mHeight);
+    if (mIntf->getWidth() % 16 != 0 || mIntf->getHeight() % 16 != 0) {
+        ALOGE("Video frame size %dx%d must be a multiple of 16",
+              mIntf->getWidth(), mIntf->getHeight());
         return C2_BAD_VALUE;
     }
 
@@ -348,10 +416,11 @@ void C2SoftMpeg4Enc::process(
         }
         return;
     }
-    if (inBuffer.width() < mWidth || inBuffer.height() < mHeight) {
+    if (inBuffer.width() < mIntf->getWidth() ||
+        inBuffer.height() < mIntf->getHeight()) {
         /* Expect width height to be configured */
         ALOGW("unexpected Capacity Aspect %d(%d) x %d(%d)", inBuffer.width(),
-              mWidth, inBuffer.height(),  mHeight);
+              mIntf->getWidth(), inBuffer.height(), mIntf->getHeight());
         work->result = C2_BAD_VALUE;
         return;
     }
@@ -369,12 +438,13 @@ void C2SoftMpeg4Enc::process(
     int32_t yStride = layout.planes[C2PlanarLayout::PLANE_Y].rowInc;
     int32_t uStride = layout.planes[C2PlanarLayout::PLANE_U].rowInc;
     int32_t vStride = layout.planes[C2PlanarLayout::PLANE_V].rowInc;
-
+    uint32_t width = mIntf->getWidth();
+    uint32_t height = mIntf->getHeight();
     switch (layout.type) {
         case C2PlanarLayout::TYPE_RGB:
-            // fall-through
+        // fall-through
         case C2PlanarLayout::TYPE_RGBA: {
-            size_t yPlaneSize = mWidth * mHeight;
+            size_t yPlaneSize = width * height;
             std::unique_ptr<uint8_t[]> freeBuffer;
             if (mFreeConversionBuffers.empty()) {
                 freeBuffer.reset(new uint8_t[yPlaneSize * 3 / 2]);
@@ -386,9 +456,9 @@ void C2SoftMpeg4Enc::process(
             mConversionBuffersInUse.push_back(std::move(freeBuffer));
             uPlane = yPlane + yPlaneSize;
             vPlane = uPlane + yPlaneSize / 4;
-            yStride = mWidth;
-            uStride = vStride = mWidth / 2;
-            ConvertRGBToPlanarYUV(yPlane, yStride, mHeight, rView);
+            yStride = width;
+            uStride = vStride = width / 2;
+            ConvertRGBToPlanarYUV(yPlane, yStride, height, rView);
             break;
         }
         case C2PlanarLayout::TYPE_YUV:
@@ -410,8 +480,8 @@ void C2SoftMpeg4Enc::process(
     vin.uChan = uPlane;
     vin.vChan = vPlane;
     vin.timestamp = (inputTimeStamp + 500) / 1000;  // in ms
-    vin.height = align(mHeight, 16);
-    vin.pitch = align(mWidth, 16);
+    vin.height = align(height, 16);
+    vin.pitch = align(width, 16);
 
     uint32_t modTimeMs = 0;
     int32_t nLayer = 0;
@@ -467,14 +537,21 @@ c2_status_t C2SoftMpeg4Enc::drain(
     return C2_OK;
 }
 
-
 class C2SoftMpeg4EncFactory : public C2ComponentFactory {
 public:
+    C2SoftMpeg4EncFactory()
+        : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+              GetCodec2PlatformComponentStore()->getParamReflector())) {}
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftMpeg4Enc(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+            new C2SoftMpeg4Enc(
+                COMPONENT_NAME, id,
+                std::make_shared<C2SoftMpeg4Enc::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
@@ -482,11 +559,18 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+            new SimpleInterface<C2SoftMpeg4Enc::IntfImpl>(
+                COMPONENT_NAME, id,
+                std::make_shared<C2SoftMpeg4Enc::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftMpeg4EncFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

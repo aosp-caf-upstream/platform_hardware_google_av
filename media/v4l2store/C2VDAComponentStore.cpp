@@ -6,6 +6,7 @@
 #define LOG_TAG "C2VDAComponentStore"
 #include <C2Component.h>
 #include <C2ComponentFactory.h>
+#include <C2Config.h>
 #include <C2V4l2Support.h>
 
 #include <utils/Log.h>

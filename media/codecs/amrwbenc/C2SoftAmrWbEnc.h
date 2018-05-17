@@ -27,7 +27,9 @@ namespace android {
 
 class C2SoftAmrWbEnc : public SimpleC2Component {
 public:
-    C2SoftAmrWbEnc(const char *name, c2_node_id_t id);
+    class IntfImpl;
+    C2SoftAmrWbEnc(const char* name, c2_node_id_t id,
+                   const std::shared_ptr<IntfImpl>& intfImpl);
     virtual ~C2SoftAmrWbEnc();
 
     // From SimpleC2Component
@@ -44,9 +46,9 @@ public:
             const std::shared_ptr<C2BlockPool> &pool) override;
 
 private:
+    std::shared_ptr<IntfImpl> mIntf;
     static const int32_t kNumSamplesPerFrame = 320;
     static const int32_t kNumBytesPerInputFrame = kNumSamplesPerFrame * sizeof(int16_t);
-    static const int32_t kSampleRate = 16000;
 
     void *mEncoderHandle;
     VO_AUDIO_CODECAPI *mApiHandle;

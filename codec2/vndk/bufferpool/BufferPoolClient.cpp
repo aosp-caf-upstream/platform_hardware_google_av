@@ -96,11 +96,12 @@ private:
     ConnectionId mConnectionId;
 
     // CachedBuffers
-    struct {
+    struct BufferCache {
         std::mutex mLock;
-        bool creating;
+        bool mCreating;
         std::condition_variable mCreateCv;
         std::map<BufferId, std::unique_ptr<ClientBuffer>> mBuffers;
+        BufferCache() : mCreating(false) {}
     } mCache;
 
     // FMQ - release notifier
@@ -134,7 +135,10 @@ private:
     bool mInvalidated; // TODO: implement
     int64_t mExpireUs;
     bool mHasCache;
+    ConnectionId mConnectionId;
     BufferId mId;
+    // For dynamic setup of buffer receiving process
+    wp<IAccessor> mAccessor;
     native_handle_t *mHandle;
     std::weak_ptr<BufferPoolData> mCache;
 
@@ -143,8 +147,11 @@ private:
     }
 
 public:
-    ClientBuffer(BufferId id, native_handle_t *handle)
-            : mInvalidated(false), mHasCache(false), mId(id), mHandle(handle) {
+    ClientBuffer(
+            ConnectionId connectionId, BufferId id, sp<IAccessor> accessor, native_handle_t *handle)
+            : mInvalidated(false), mHasCache(false),
+              mConnectionId(connectionId), mId(id),
+              mAccessor(accessor), mHandle(handle) {
         (void)mInvalidated;
         mExpireUs = getTimestampNow() + kCacheTtlUs;
     }
@@ -182,7 +189,7 @@ public:
             // Allocates a raw ptr in order to avoid sending #postBufferRelease
             // from deleter, in case of native_handle_clone failure.
             BufferPoolData *ptr = new BufferPoolData(
-                    mId, native_handle_clone(mHandle));
+                    mConnectionId, mId, mAccessor, native_handle_clone(mHandle));
             if (ptr && ptr->mHandle != NULL) {
                 std::shared_ptr<BufferPoolData>
                         cache(ptr, BlockPoolDataDtor(impl));
@@ -267,7 +274,7 @@ ResultStatus BufferPoolClient::Impl::allocate(
                 mCache.mBuffers.erase(cacheIt);
             }
             auto clientBuffer = std::make_unique<ClientBuffer>(
-                    bufferId, handle);
+                    mConnectionId, bufferId, mAccessor, handle);
             if (clientBuffer) {
                 auto result = mCache.mBuffers.insert(std::make_pair(
                         bufferId, std::move(clientBuffer)));
@@ -322,8 +329,8 @@ ResultStatus BufferPoolClient::Impl::receive(
                 break;
             }
         } else {
-            if (!mCache.creating) {
-                mCache.creating = true;
+            if (!mCache.mCreating) {
+                mCache.mCreating = true;
                 lock.unlock();
                 native_handle_t* handle = NULL;
                 status = fetchBufferHandle(transactionId, bufferId, &handle);
@@ -331,7 +338,7 @@ ResultStatus BufferPoolClient::Impl::receive(
                 if (status == ResultStatus::OK) {
                     if (handle) {
                         auto clientBuffer = std::make_unique<ClientBuffer>(
-                                bufferId, handle);
+                                mConnectionId, bufferId, mAccessor, handle);
                         if (clientBuffer) {
                             auto result = mCache.mBuffers.insert(
                                     std::make_pair(bufferId, std::move(
@@ -346,7 +353,7 @@ ResultStatus BufferPoolClient::Impl::receive(
                         status = ResultStatus::NO_MEMORY;
                     }
                 }
-                mCache.creating = false;
+                mCache.mCreating = false;
                 lock.unlock();
                 mCache.mCreateCv.notify_all();
                 break;

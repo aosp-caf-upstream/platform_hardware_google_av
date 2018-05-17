@@ -19,35 +19,15 @@
 #include <utils/Log.h>
 #include <utils/misc.h>
 
-#include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
-
-#include <media/stagefright/foundation/ADebug.h>
-#include <media/stagefright/foundation/MediaDefs.h>
-
 #include "C2SoftVp8Enc.h"
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.vp8.encoder";
+constexpr char COMPONENT_NAME[] = "c2.google.vp8.encoder";
 
-std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatVideo)
-            .outputFormat(C2FormatCompressed)
-            .inputMediaType(MEDIA_MIMETYPE_VIDEO_RAW)
-            .outputMediaType(MEDIA_MIMETYPE_VIDEO_VP8)
-            .build();
-}
-
-C2SoftVp8Enc::C2SoftVp8Enc(const char *name, c2_node_id_t id)
-    : C2SoftVpxEnc(BuildIntf(name, id)),
-      mDCTPartitions(0),
-      mProfile(1) {
-}
+C2SoftVp8Enc::C2SoftVp8Enc(const char* name, c2_node_id_t id,
+                           const std::shared_ptr<IntfImpl>& intfImpl)
+    : C2SoftVpxEnc(name, id, intfImpl), mDCTPartitions(0), mProfile(1) {}
 
 void C2SoftVp8Enc::setCodecSpecificInterface() {
     mCodecInterface = vpx_codec_vp8_cx();
@@ -88,11 +68,18 @@ vpx_codec_err_t C2SoftVp8Enc::setCodecSpecificControls() {
 
 class C2SoftVp8EncFactory : public C2ComponentFactory {
 public:
+    C2SoftVp8EncFactory()
+        : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+              GetCodec2PlatformComponentStore()->getParamReflector())) {}
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftVp8Enc(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+            new C2SoftVp8Enc(COMPONENT_NAME, id,
+                             std::make_shared<C2SoftVpxEnc::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
@@ -100,11 +87,18 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+            new SimpleInterface<C2SoftVpxEnc::IntfImpl>(
+                COMPONENT_NAME, id,
+                std::make_shared<C2SoftVpxEnc::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftVp8EncFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android
@@ -118,4 +112,3 @@ extern "C" void DestroyCodec2Factory(::C2ComponentFactory* factory) {
     ALOGV("in %s", __func__);
     delete factory;
 }
-

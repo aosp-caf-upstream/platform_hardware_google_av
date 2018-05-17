@@ -27,7 +27,8 @@ namespace android {
 // available:
 //    - token partitioning
 struct C2SoftVp8Enc : public C2SoftVpxEnc {
-    C2SoftVp8Enc(const char *name, c2_node_id_t id);
+    C2SoftVp8Enc(const char* name, c2_node_id_t id,
+                 const std::shared_ptr<IntfImpl>& intfImpl);
 
  protected:
     // Populates |mCodecInterface| with codec specific settings.
@@ -40,21 +41,20 @@ struct C2SoftVp8Enc : public C2SoftVpxEnc {
     virtual vpx_codec_err_t setCodecSpecificControls();
 
  private:
-     // Max value supported for DCT partitions
-     static const uint32_t kMaxDCTPartitions = 3;
+    // Max value supported for DCT partitions
+    static const uint32_t kMaxDCTPartitions = 3;
 
-     // vp8 specific configuration parameter
-     // that enables token partitioning of
-     // the stream into substreams
-     int32_t mDCTPartitions;
+    // vp8 specific configuration parameter
+    // that enables token partitioning of
+    // the stream into substreams
+    int32_t mDCTPartitions;
 
-     // C2 Profile parameter
-     int32_t mProfile;
+    // C2 Profile parameter
+    int32_t mProfile;
 
-     DISALLOW_EVIL_CONSTRUCTORS(C2SoftVp8Enc);
- };
+    DISALLOW_EVIL_CONSTRUCTORS(C2SoftVp8Enc);
+};
 
 }  // namespace android
 
 #endif  // C2_SOFT_VP8_ENC_H__
-

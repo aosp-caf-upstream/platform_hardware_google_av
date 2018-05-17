@@ -1986,18 +1986,20 @@ public:
     /**
      *  The type of buffer data.
      */
-    enum Type : uint32_t {
+    enum type_t : uint32_t {
+        INVALID,            ///< invalid buffer type. Do not use.
         LINEAR,             ///< the buffer contains a single linear block
         LINEAR_CHUNKS,      ///< the buffer contains one or more linear blocks
         GRAPHIC,            ///< the buffer contains a single graphic block
         GRAPHIC_CHUNKS,     ///< the buffer contains one of more graphic blocks
     };
+    typedef type_t Type; // deprecated
 
     /**
      * Gets the type of this buffer (data).
      * \return the type of this buffer data.
      */
-    Type type() const;
+    type_t type() const;
 
     /**
      * Gets the linear blocks of this buffer.

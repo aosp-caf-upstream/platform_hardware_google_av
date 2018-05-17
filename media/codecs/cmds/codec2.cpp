@@ -51,11 +51,11 @@
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 
-#include <util/C2ParamUtils.h>
 #include <C2AllocatorGralloc.h>
 #include <C2Buffer.h>
 #include <C2BufferPriv.h>
 #include <C2Component.h>
+#include <C2Config.h>
 #include <C2PlatformSupport.h>
 #include <C2Work.h>
 

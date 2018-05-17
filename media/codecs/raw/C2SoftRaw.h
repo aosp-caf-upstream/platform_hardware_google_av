@@ -24,7 +24,10 @@
 namespace android {
 
 struct C2SoftRaw : public SimpleC2Component {
-    C2SoftRaw(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftRaw(const char* name, c2_node_id_t id,
+              const std::shared_ptr<IntfImpl>& intfImpl);
     virtual ~C2SoftRaw();
 
     // From SimpleC2Component
@@ -40,6 +43,7 @@ struct C2SoftRaw : public SimpleC2Component {
             uint32_t drainMode,
             const std::shared_ptr<C2BlockPool> &pool) override;
 private:
+    std::shared_ptr<IntfImpl> mIntf;
     bool mSignalledEos;
 
     DISALLOW_EVIL_CONSTRUCTORS(C2SoftRaw);

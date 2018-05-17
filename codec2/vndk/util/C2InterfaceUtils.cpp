@@ -25,10 +25,7 @@
 #include <C2Param.h>
 #include <C2ParamDef.h>
 #include <C2ParamInternal.h>
-#include <util/C2ParamUtils.h>
 #include <util/C2InterfaceUtils.h>
-#include <C2Work.h>
-#include <C2Component.h>
 
 #include <cmath>
 #include <limits>

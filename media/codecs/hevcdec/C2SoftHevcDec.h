@@ -45,7 +45,10 @@ namespace android {
 
 
 struct C2SoftHevcDec : public SimpleC2Component {
-    C2SoftHevcDec(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftHevcDec(const char* name, c2_node_id_t id,
+                  const std::shared_ptr<IntfImpl>& intfImpl);
     virtual ~C2SoftHevcDec();
 
     // From SimpleC2Component
@@ -101,6 +104,7 @@ struct C2SoftHevcDec : public SimpleC2Component {
         kPreferContainer,
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
     iv_obj_t *mDecHandle;
     std::shared_ptr<C2GraphicBlock> mOutBlock;
     uint8_t *mOutBufferFlush;

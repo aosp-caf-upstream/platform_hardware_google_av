@@ -29,6 +29,7 @@
 
 using ::android::AnwBuffer;
 using ::android::BufferQueueDefs::NUM_BUFFER_SLOTS;
+using ::android::C2AllocatorGralloc;
 using ::android::C2AndroidMemoryUsage;
 using ::android::Fence;
 using ::android::GraphicBuffer;
@@ -38,6 +39,72 @@ using ::android::hidl_handle;
 using ::android::sp;
 using ::android::status_t;
 using ::android::hardware::graphics::common::V1_0::PixelFormat;
+
+struct C2_HIDE C2BufferQueueBlockPoolData : public _C2BlockPoolData {
+
+    virtual Type getType() const override {
+        return TYPE_BUFFERQUEUE;
+    }
+
+    void getBufferQueueData(uint64_t *igbp_id, int32_t *igbp_slot) const {
+        *igbp_id = mIgbpId;
+        *igbp_slot = mIgbpSlot;
+    }
+
+    C2BufferQueueBlockPoolData(uint64_t igbp_id, int32_t igbp_slot)
+            : mIgbpId(igbp_id), mIgbpSlot(igbp_slot) {}
+
+    virtual ~C2BufferQueueBlockPoolData() override {}
+
+private:
+    uint64_t mIgbpId;
+    int32_t mIgbpSlot;
+};
+
+bool _C2BlockFactory::GetBufferQueueData(
+        const std::shared_ptr<const _C2BlockPoolData> &data,
+        uint64_t *igbp_id, int32_t *igbp_slot) {
+    if (data && data->getType() == _C2BlockPoolData::TYPE_BUFFERQUEUE) {
+        const std::shared_ptr<const C2BufferQueueBlockPoolData> poolData =
+                std::static_pointer_cast<const C2BufferQueueBlockPoolData>(data);
+        poolData->getBufferQueueData(igbp_id, igbp_slot);
+        return true;
+    }
+    return false;
+}
+
+std::shared_ptr<C2GraphicBlock> _C2BlockFactory::CreateGraphicBlock(
+        const C2Handle *handle) {
+    // TODO: get proper allocator? and mutex?
+    static std::unique_ptr<C2AllocatorGralloc> sAllocator = std::make_unique<C2AllocatorGralloc>(0);
+
+    std::shared_ptr<C2GraphicAllocation> alloc;
+    if (C2AllocatorGralloc::isValid(handle)) {
+        uint32_t width;
+        uint32_t height;
+        uint32_t format;
+        uint64_t usage;
+        uint32_t stride;
+        uint64_t igbp_id;
+        uint32_t igbp_slot;
+        android::_UnwrapNativeCodec2GrallocMetadata(
+                handle, &width, &height, &format, &usage, &stride, &igbp_id, &igbp_slot);
+        c2_status_t err = sAllocator->priorGraphicAllocation(handle, &alloc);
+        if (err == C2_OK) {
+            std::shared_ptr<C2GraphicBlock> block;
+            if (!igbp_id || !igbp_slot) {
+                // BQBBP
+                std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+                        std::make_shared<C2BufferQueueBlockPoolData>(igbp_id, (int32_t)igbp_slot);
+                block = _C2BlockFactory::CreateGraphicBlock(alloc);
+            } else {
+                block = _C2BlockFactory::CreateGraphicBlock(alloc);
+            }
+            return block;
+        }
+    }
+    return nullptr;
+}
 
 class C2BufferQueueBlockPool::Impl {
 private:
@@ -136,7 +203,9 @@ private:
                     if (err != C2_OK) {
                         return err;
                     }
-                    *block = _C2BlockFactory::CreateGraphicBlock(alloc);
+                    std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+                            std::make_shared<C2BufferQueueBlockPoolData>(mProducerId, slot);
+                    *block = _C2BlockFactory::CreateGraphicBlock(alloc, poolData);
                     return C2_OK;
                 }
             }
@@ -180,7 +249,12 @@ public:
                 if (err != C2_OK) {
                     return err;
                 }
-                *block = _C2BlockFactory::CreateGraphicBlock(alloc);
+                const C2Handle *handle = alloc->handle();
+                C2AllocatorGralloc::useIgbp(handle);
+                std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+                        std::make_shared<C2BufferQueueBlockPoolData>((uint64_t)0, ~0);
+                // TODO: config?
+                *block = _C2BlockFactory::CreateGraphicBlock(alloc, poolData);
                 ALOGV("allocated a buffer successfully");
 
                 return C2_OK;

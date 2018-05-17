@@ -18,7 +18,6 @@
 #define C2UTILS_INTERFACE_HELPER_H_
 
 #include <C2Component.h>
-#include <util/C2ParamUtils.h> // for _C2Tuple
 #include <util/C2InterfaceUtils.h>
 
 #include <map>
@@ -60,7 +59,7 @@ public:
     template<typename... Params>
     C2_INLINE void addStructDescriptors() {
         std::vector<C2StructDescriptor> structs;
-        addStructDescriptors(structs, (_C2Tuple<Params...> *)nullptr);
+        addStructDescriptors(structs, (_Tuple<Params...> *)nullptr);
     }
 
     /**
@@ -71,13 +70,16 @@ public:
     void addStructDescriptor(C2StructDescriptor &&strukt);
 
 private:
+    template<typename... Params>
+    class C2_HIDE _Tuple { };
+
     /**
      * Adds support for describing the given descriptors.
      *
      * \param structs List of structure descriptors to add support for
      */
     C2_HIDE void addStructDescriptors(
-            std::vector<C2StructDescriptor> &structs, _C2Tuple<> *);
+            std::vector<C2StructDescriptor> &structs, _Tuple<> *);
 
     /**
      * Utility method that adds support for describing the given descriptors in a recursive manner
@@ -89,9 +91,9 @@ private:
      */
     template<typename T, typename... Params>
     C2_INLINE void addStructDescriptors(
-            std::vector<C2StructDescriptor> &structs, _C2Tuple<T, Params...> *) {
+            std::vector<C2StructDescriptor> &structs, _Tuple<T, Params...> *) {
         structs.emplace_back((T*)nullptr);
-        addStructDescriptors(structs, (_C2Tuple<Params...> *)nullptr);
+        addStructDescriptors(structs, (_Tuple<Params...> *)nullptr);
     }
 
     mutable std::mutex _mMutex;

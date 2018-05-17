@@ -21,29 +21,77 @@
 #include "C2SoftFlacEnc.h"
 
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
 
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.flac.encoder";
+class C2SoftFlacEnc::IntfImpl : public C2InterfaceHelper {
+public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
+        setDerivedInstance(this);
+        addParameter(
+                DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::input(0u, C2FormatAudio))
+                .build());
+        addParameter(
+                DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::output(0u, C2FormatCompressed))
+                .build());
+        addParameter(
+                DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                        MEDIA_MIMETYPE_AUDIO_RAW))
+                .build());
+        addParameter(
+                DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                        MEDIA_MIMETYPE_AUDIO_FLAC))
+                .build());
+        addParameter(
+                DefineParam(mSampleRate, C2_NAME_STREAM_SAMPLE_RATE_SETTING)
+                .withDefault(new C2StreamSampleRateInfo::input(0u, 44100))
+                .withFields({C2F(mSampleRate, value).inRange(1, 655350)})
+                .withSetter((Setter<decltype(*mSampleRate)>::StrictValueWithNoDeps))
+                .build());
+        addParameter(
+                DefineParam(mChannelCount, C2_NAME_STREAM_CHANNEL_COUNT_SETTING)
+                .withDefault(new C2StreamChannelCountInfo::input(0u, 1))
+                .withFields({C2F(mChannelCount, value).inRange(1, 2)})
+                .withSetter(Setter<decltype(*mChannelCount)>::StrictValueWithNoDeps)
+                .build());
+        addParameter(
+                DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::output(0u, 768000))
+                .withFields({C2F(mBitrate, value).inRange(1, 21000000)})
+                .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
 
-static std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatAudio)
-            .outputFormat(C2FormatCompressed)
-            .inputMediaType(MEDIA_MIMETYPE_AUDIO_RAW)
-            .outputMediaType(MEDIA_MIMETYPE_AUDIO_FLAC)
-            .build();
-}
+    uint32_t getSampleRate() const { return mSampleRate->value; }
+    uint32_t getChannelCount() const { return mChannelCount->value; }
+    uint32_t getBitrate() const { return mBitrate->value; }
 
-C2SoftFlacEnc::C2SoftFlacEnc(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamSampleRateInfo::input> mSampleRate;
+    std::shared_ptr<C2StreamChannelCountInfo::input> mChannelCount;
+    std::shared_ptr<C2BitrateTuning::output> mBitrate;
+};
+constexpr char COMPONENT_NAME[] = "c2.google.flac.encoder";
+
+C2SoftFlacEnc::C2SoftFlacEnc(
+        const char *name,
+        c2_node_id_t id,
+        const std::shared_ptr<IntfImpl> &intfImpl)
+    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mFlacStreamEncoder(nullptr),
       mInputBufferPcm32(nullptr) {
 }
@@ -62,18 +110,14 @@ c2_status_t C2SoftFlacEnc::onInit() {
 
     mSignalledError = false;
     mSignalledOutputEos = false;
-    mNumChannels = 1;
-    mSampleRate = 44100;
     mCompressionLevel = FLAC_COMPRESSION_LEVEL_DEFAULT;
     mIsFirstFrame = true;
     mAnchorTimeStamp = 0ull;
     mProcessedSamples = 0u;
     mEncoderWriteData = false;
     mEncoderReturnedNbBytes = 0;
-#ifdef WRITE_FLAC_HEADER_IN_FIRST_BUFFER
     mHeaderOffset = 0;
     mWroteHeader = false;
-#endif
 
     status_t err = configureEncoder();
     return err == OK ? C2_OK : C2_CORRUPTED;
@@ -92,8 +136,6 @@ void C2SoftFlacEnc::onRelease() {
 }
 
 void C2SoftFlacEnc::onReset() {
-    mNumChannels = 1;
-    mSampleRate = 44100;
     mCompressionLevel = FLAC_COMPRESSION_LEVEL_DEFAULT;
     (void) onStop();
 }
@@ -106,10 +148,8 @@ c2_status_t C2SoftFlacEnc::onStop() {
     mProcessedSamples = 0u;
     mEncoderWriteData = false;
     mEncoderReturnedNbBytes = 0;
-#ifdef WRITE_FLAC_HEADER_IN_FIRST_BUFFER
     mHeaderOffset = 0;
     mWroteHeader = false;
-#endif
 
     c2_status_t status = drain(DRAIN_COMPONENT_NO_EOS, nullptr);
     if (C2_OK != status) return status;
@@ -158,13 +198,25 @@ void C2SoftFlacEnc::process(
         mAnchorTimeStamp = work->input.ordinal.timestamp.peekull();
         mIsFirstFrame = false;
     }
-    uint64_t outTimeStamp = mProcessedSamples * 1000000ll / mSampleRate;
+
+    if (!mWroteHeader) {
+        std::unique_ptr<C2StreamCsdInfo::output> csd =
+            C2StreamCsdInfo::output::AllocUnique(mHeaderOffset, 0u);
+        // TODO: check NO_MEMORY
+        memcpy(csd->m.value, mHeader, mHeaderOffset);
+        ALOGV("put csd, %d bytes", mHeaderOffset);
+
+        work->worklets.front()->output.configUpdate.push_back(std::move(csd));
+        mWroteHeader = true;
+    }
+
+    uint32_t sampleRate = mIntf->getSampleRate();
+    uint32_t channelCount = mIntf->getChannelCount();
+    uint64_t outTimeStamp = mProcessedSamples * 1000000ll / sampleRate;
 
     size_t outCapacity = inSize;
-    outCapacity += mBlockSize * mNumChannels * sizeof(int16_t);
-#ifdef WRITE_FLAC_HEADER_IN_FIRST_BUFFER
-    outCapacity += FLAC_HEADER_SIZE;
-#endif
+    outCapacity += mBlockSize * channelCount * sizeof(int16_t);
+
     C2MemoryUsage usage = { C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE };
     c2_status_t err = pool->fetchLinearBlock(outCapacity, usage, &mOutputBlock);
     if (err != C2_OK) {
@@ -184,8 +236,8 @@ void C2SoftFlacEnc::process(
     size_t inPos = 0;
     const uint8_t *inPtr = rView.data() + inOffset;
     while (inPos < inSize) {
-        size_t processSize = MIN(kInBlockSize * mNumChannels * sizeof(int16_t), (inSize - inPos));
-        const unsigned nbInputFrames = processSize / (mNumChannels * sizeof(int16_t));
+        size_t processSize = MIN(kInBlockSize * channelCount * sizeof(int16_t), (inSize - inPos));
+        const unsigned nbInputFrames = processSize / (channelCount * sizeof(int16_t));
         const unsigned nbInputSamples = processSize / sizeof(int16_t);
         const int16_t *pcm16 = reinterpret_cast<const int16_t *>(inPtr + inPos);
         ALOGV("about to encode %zu bytes", processSize);
@@ -236,14 +288,12 @@ FLAC__StreamEncoderWriteStatus C2SoftFlacEnc::onEncodedFlacAvailable(
     ALOGV("%s (bytes=%zu, samples=%u, curr_frame=%u)", __func__, bytes, samples,
           current_frame);
 
-#ifdef WRITE_FLAC_HEADER_IN_FIRST_BUFFER
     if (samples == 0) {
         ALOGI("saving %zu bytes of header", bytes);
         memcpy(mHeader + mHeaderOffset, buffer, bytes);
         mHeaderOffset += bytes;// will contain header size when finished receiving header
         return FLAC__STREAM_ENCODER_WRITE_STATUS_OK;
     }
-#endif
 
     if ((samples == 0) || !mEncoderWriteData) {
         // called by the encoder because there's header data to save, but it's not the role
@@ -255,14 +305,6 @@ FLAC__StreamEncoderWriteStatus C2SoftFlacEnc::onEncodedFlacAvailable(
     // write encoded data
     C2WriteView wView = mOutputBlock->map().get();
     uint8_t* outData = wView.data();
-#ifdef WRITE_FLAC_HEADER_IN_FIRST_BUFFER
-    if (!mWroteHeader) {
-        ALOGI("writing %d bytes of header on output", mHeaderOffset);
-        memcpy(outData + mEncoderReturnedNbBytes, mHeader, mHeaderOffset);
-        mEncoderReturnedNbBytes += mHeaderOffset;
-        mWroteHeader = true;
-    }
-#endif
     ALOGV("writing %zu bytes of encoded data on output", bytes);
     // increment mProcessedSamples to maintain audio synchronization during
     // play back
@@ -279,7 +321,7 @@ FLAC__StreamEncoderWriteStatus C2SoftFlacEnc::onEncodedFlacAvailable(
 
 
 status_t C2SoftFlacEnc::configureEncoder() {
-    ALOGV("%s numChannel=%d, sampleRate=%d", __func__, mNumChannels, mSampleRate);
+    ALOGV("%s numChannel=%d, sampleRate=%d", __func__, mIntf->getChannelCount(), mIntf->getSampleRate());
 
     if (mSignalledError || !mFlacStreamEncoder) {
         ALOGE("can't configure encoder: no encoder or invalid state");
@@ -287,8 +329,8 @@ status_t C2SoftFlacEnc::configureEncoder() {
     }
 
     FLAC__bool ok = true;
-    ok = ok && FLAC__stream_encoder_set_channels(mFlacStreamEncoder, mNumChannels);
-    ok = ok && FLAC__stream_encoder_set_sample_rate(mFlacStreamEncoder, mSampleRate);
+    ok = ok && FLAC__stream_encoder_set_channels(mFlacStreamEncoder, mIntf->getChannelCount());
+    ok = ok && FLAC__stream_encoder_set_sample_rate(mFlacStreamEncoder, mIntf->getSampleRate());
     ok = ok && FLAC__stream_encoder_set_bits_per_sample(mFlacStreamEncoder, 16);
     ok = ok && FLAC__stream_encoder_set_compression_level(mFlacStreamEncoder, mCompressionLevel);
     ok = ok && FLAC__stream_encoder_set_verify(mFlacStreamEncoder, false);
@@ -359,11 +401,19 @@ c2_status_t C2SoftFlacEnc::drain(
 
 class C2SoftFlacEncFactory : public C2ComponentFactory {
 public:
+    C2SoftFlacEncFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+            GetCodec2PlatformComponentStore()->getParamReflector())) {
+    }
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftFlacEnc(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+                new C2SoftFlacEnc(COMPONENT_NAME,
+                                  id,
+                                  std::make_shared<C2SoftFlacEnc::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
@@ -371,11 +421,16 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+                new SimpleInterface<C2SoftFlacEnc::IntfImpl>(
+                        COMPONENT_NAME, id, std::make_shared<C2SoftFlacEnc::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftFlacEncFactory() override = default;
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

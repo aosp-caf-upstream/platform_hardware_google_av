@@ -24,8 +24,10 @@
 namespace android {
 
 class C2SoftAmrNbEnc : public SimpleC2Component {
-public:
-    C2SoftAmrNbEnc(const char *name, c2_node_id_t id);
+   public:
+    class IntfImpl;
+    C2SoftAmrNbEnc(const char* name, c2_node_id_t id,
+                   const std::shared_ptr<IntfImpl>& intfImpl);
     virtual ~C2SoftAmrNbEnc();
 
     // From SimpleC2Component
@@ -42,9 +44,9 @@ public:
             const std::shared_ptr<C2BlockPool> &pool) override;
 
 private:
+    std::shared_ptr<IntfImpl> mIntf;
     static const int32_t kNumSamplesPerFrame = L_FRAME;
     static const int32_t kNumBytesPerInputFrame = kNumSamplesPerFrame * sizeof(int16_t);
-    static const int32_t kSampleRate = 8000;
 
     void *mEncState;
     void *mSidState;

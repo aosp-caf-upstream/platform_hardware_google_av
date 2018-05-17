@@ -20,8 +20,9 @@
 #include <hardware/google/media/c2/1.0/types.h>
 #include <hardware/google/media/c2/1.0/IComponentStore.h>
 
-#include <C2Param.h>
 #include <C2Component.h>
+#include <C2Param.h>
+#include <C2ParamDef.h>
 #include <C2Work.h>
 
 namespace hardware {

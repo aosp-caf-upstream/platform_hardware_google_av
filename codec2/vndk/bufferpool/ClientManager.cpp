@@ -51,8 +51,7 @@ public:
                          int64_t timestampUs,
                          std::shared_ptr<BufferPoolData> *buffer);
 
-    ResultStatus postSend(ConnectionId connectionId,
-                          ConnectionId receiverId,
+    ResultStatus postSend(ConnectionId receiverId,
                           const std::shared_ptr<BufferPoolData> &buffer,
                           TransactionId *transactionId,
                           int64_t *timestampUs);
@@ -212,9 +211,9 @@ ResultStatus ClientManager::Impl::receive(
 }
 
 ResultStatus ClientManager::Impl::postSend(
-        ConnectionId connectionId, ConnectionId receiverId,
-        const std::shared_ptr<BufferPoolData> &buffer,
+        ConnectionId receiverId, const std::shared_ptr<BufferPoolData> &buffer,
         TransactionId *transactionId, int64_t *timestampUs) {
+    ConnectionId connectionId = buffer->mConnectionId;
     std::shared_ptr<BufferPoolClient> client;
     {
         std::lock_guard<std::mutex> lock(mActive.mMutex);
@@ -307,12 +306,10 @@ ResultStatus ClientManager::receive(
 }
 
 ResultStatus ClientManager::postSend(
-        ConnectionId connectionId, ConnectionId receiverId,
-        const std::shared_ptr<BufferPoolData> &buffer,
+        ConnectionId receiverId, const std::shared_ptr<BufferPoolData> &buffer,
         TransactionId *transactionId, int64_t* timestampUs) {
-    if (mImpl) {
-        return mImpl->postSend(connectionId, receiverId, buffer,
-                               transactionId, timestampUs);
+    if (mImpl && buffer) {
+        return mImpl->postSend(receiverId, buffer, transactionId, timestampUs);
     }
     return ResultStatus::CRITICAL_ERROR;
 }
