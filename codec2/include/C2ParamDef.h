@@ -749,6 +749,22 @@ struct _C2ValueArrayHelper {
         }
     }
 
+    /// Initialize a flexible array using a vector.
+    template<typename T>
+    static void init(T(&array)[], size_t arrayLen, const std::vector<T> &init) {
+        size_t ix = 0;
+        // reserve last element for terminal 0 for strings
+        if (arrayLen && std::is_same<T, char>::value) {
+            --arrayLen;
+        }
+        for (const T &item : init) {
+            if (ix == arrayLen) {
+                break;
+            }
+            array[ix++] = item;
+        }
+    }
+
     /// Initialize a flexible array using another flexible array.
     template<typename T, unsigned N>
     static void init(T(&array)[], size_t arrayLen, const T(&str)[N]) {
@@ -789,6 +805,10 @@ private:
         _C2ValueArrayHelper::init(value, flexCount, init);
     }
 
+    inline C2SimpleValueStruct(size_t flexCount, const std::vector<T> &init) {
+        _C2ValueArrayHelper::init(value, flexCount, init);
+    }
+
     template<unsigned N>
     inline C2SimpleValueStruct(size_t flexCount, const T(&init)[N]) {
         _C2ValueArrayHelper::init(value, flexCount, init);
@@ -826,6 +846,12 @@ private:
     /// Construct from an initializer list.
     /// Used only by the flexible parameter allocators (AllocUnique & AllocShared).
     inline C2SimpleArrayStruct(size_t flexCount, const std::initializer_list<T> &init) {
+        _C2ValueArrayHelper::init(values, flexCount, init);
+    }
+
+    /// Construct from an vector.
+    /// Used only by the flexible parameter allocators (AllocUnique & AllocShared).
+    inline C2SimpleArrayStruct(size_t flexCount, const std::vector<T> &init) {
         _C2ValueArrayHelper::init(values, flexCount, init);
     }
 

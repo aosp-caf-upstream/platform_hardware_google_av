@@ -209,7 +209,7 @@ namespace {
 
 // TODO: get this info from component
 const static size_t kMinBufferArraySize = 16;
-const static size_t kLinearBufferSize = 524288;
+const static size_t kLinearBufferSize = 1048576;
 const static size_t kMaxGraphicBufferRefCount = 4;
 
 /**
@@ -610,6 +610,7 @@ public:
 
     std::unique_ptr<CCodecBufferChannel::InputBuffers> toArrayMode() final {
         std::unique_ptr<InputBuffersArray> array(new InputBuffersArray);
+        array->setPool(mPool);
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,
@@ -732,6 +733,7 @@ public:
             return nullptr;
         }
         std::unique_ptr<InputBuffersArray> array(new InputBuffersArray);
+        array->setPool(mPool);
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,
@@ -777,6 +779,7 @@ public:
 
     std::unique_ptr<CCodecBufferChannel::InputBuffers> toArrayMode() final {
         std::unique_ptr<InputBuffersArray> array(new InputBuffersArray);
+        array->setPool(mPool);
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,

@@ -565,13 +565,16 @@ ResultStatus _C2BufferPoolAllocator::allocate(
 bool _C2BufferPoolAllocator::compatible(
         const std::vector<uint8_t>  &newParams,
         const std::vector<uint8_t>  &oldParams) {
-    size_t newSize = newParams.size();
-    size_t oldSize = oldParams.size();
+    AllocParams newAlloc;
+    AllocParams oldAlloc;
+    memcpy(&newAlloc, newParams.data(), std::min(sizeof(AllocParams), newParams.size()));
+    memcpy(&oldAlloc, oldParams.data(), std::min(sizeof(AllocParams), oldParams.size()));
 
     // TODO: support not exact matching. e.g) newCapacity < oldCapacity
-    if (newSize == oldSize) {
-        for (size_t i = 0; i < newSize; ++i) {
-            if (newParams[i] != oldParams[i]) {
+    if (newAlloc.data.allocType == oldAlloc.data.allocType &&
+            newAlloc.data.usage.expected == oldAlloc.data.usage.expected) {
+        for (int i = 0; i < kMaxIntParams; ++i) {
+            if (newAlloc.data.params[i] != oldAlloc.data.params[i]) {
                 return false;
             }
         }

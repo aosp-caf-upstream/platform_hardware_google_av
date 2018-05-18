@@ -13,11 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#define LOG_TAG "BufferPoolManager"
+//#define LOG_NDEBUG 0
 
 #include <bufferpool/ClientManager.h>
+#include <hidl/HidlTransportSupport.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <utils/Log.h>
 #include "BufferPoolClient.h"
 
 namespace android {
@@ -68,7 +72,7 @@ private:
         // This lock is held for brief duration.
         // Blocking operation is not performed while holding the lock.
         std::mutex mMutex;
-        std::map<const wp<IAccessor>, const std::weak_ptr<BufferPoolClient>>
+        std::list<std::pair<const wp<IAccessor>, const std::weak_ptr<BufferPoolClient>>>
                 mClients;
         std::condition_variable mConnectCv;
         bool mConnecting;
@@ -94,14 +98,18 @@ ResultStatus ClientManager::Impl::registerSender(
     int64_t timeoutUs = getTimestampNow() + kRegisterTimeoutUs;
     do {
         std::unique_lock<std::mutex> lock(mCache.mMutex);
-        auto it = mCache.mClients.find(accessor);
-        if (it != mCache.mClients.end()) {
-            const std::shared_ptr<BufferPoolClient> client = it->second.lock();
-            if (client) {
-                *pConnectionId = client->getConnectionId();
-                return ResultStatus::ALREADY_EXISTS;
+        for (auto it = mCache.mClients.begin(); it != mCache.mClients.end(); ++it) {
+            sp<IAccessor> sAccessor = it->first.promote();
+            if (sAccessor && interfacesEqual(sAccessor, accessor)) {
+                const std::shared_ptr<BufferPoolClient> client = it->second.lock();
+                if (client) {
+                    *pConnectionId = client->getConnectionId();
+                    ALOGV("register existing connection %lld", (long long)*pConnectionId);
+                    return ResultStatus::ALREADY_EXISTS;
+                }
+                mCache.mClients.erase(it);
+                break;
             }
-            mCache.mClients.erase(it);
         }
         if (!mCache.mConnecting) {
             mCache.mConnecting = true;
@@ -118,13 +126,14 @@ ResultStatus ClientManager::Impl::registerSender(
             if (result == ResultStatus::OK) {
                 // TODO: handle insert fail. (malloc fail)
                 const std::weak_ptr<BufferPoolClient> wclient = client;
-                mCache.mClients.insert(std::make_pair(accessor, wclient));
+                mCache.mClients.push_back(std::make_pair(accessor, wclient));
                 ConnectionId conId = client->getConnectionId();
                 {
                     std::lock_guard<std::mutex> lock(mActive.mMutex);
                     mActive.mClients.insert(std::make_pair(conId, client));
                 }
                 *pConnectionId = conId;
+                ALOGV("register new connection %lld", (long long)*pConnectionId);
             }
             mCache.mConnecting = false;
             lock.unlock();
@@ -153,15 +162,15 @@ ResultStatus ClientManager::Impl::create(
     {
         // TODO: handle insert fail. (malloc fail)
         std::lock_guard<std::mutex> lock(mCache.mMutex);
-        const wp<Accessor> waccessor = accessor;
         const std::weak_ptr<BufferPoolClient> wclient = client;
-        mCache.mClients.insert(std::make_pair(waccessor, wclient));
+        mCache.mClients.push_back(std::make_pair(accessor, wclient));
         ConnectionId conId = client->getConnectionId();
         {
             std::lock_guard<std::mutex> lock(mActive.mMutex);
             mActive.mClients.insert(std::make_pair(conId, client));
         }
         *pConnectionId = conId;
+        ALOGV("create new connection %lld", (long long)*pConnectionId);
     }
     return ResultStatus::OK;
 }
@@ -172,8 +181,15 @@ ResultStatus ClientManager::Impl::close(ConnectionId connectionId) {
     auto it = mActive.mClients.find(connectionId);
     if (it != mActive.mClients.end()) {
         sp<IAccessor> accessor;
-        if (it->second->getAccessor(&accessor) == ResultStatus::OK) {
-            mCache.mClients.erase(accessor);
+        it->second->getAccessor(&accessor);
+        for (auto cit = mCache.mClients.begin(); cit != mCache.mClients.end();) {
+            // clean up dead client caches
+            sp<IAccessor> cAccessor = cit->first.promote();
+            if (!cAccessor || (accessor && interfacesEqual(cAccessor, accessor))) {
+                cit = mCache.mClients.erase(cit);
+            } else {
+                cit++;
+            }
         }
         mActive.mClients.erase(connectionId);
         return ResultStatus::OK;
