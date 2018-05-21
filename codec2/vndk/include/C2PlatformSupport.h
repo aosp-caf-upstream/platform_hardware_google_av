@@ -55,6 +55,15 @@ public:
          * to create a C2Handle from a gralloc handle - for C2Allocator::priorAllocation.
          */
         GRALLOC,
+
+        /**
+         * ID of the bufferqueue backed platform allocator.
+         *
+         * C2Handle layout is not public. Use C2AllocatorGralloc::UnwrapNativeCodec2GrallocHandle
+         * to get the underlying handle from a C2Handle, and WrapNativeCodec2GrallocHandle
+         * to create a C2Handle from a handle - for C2Allocator::priorAllocation.
+         */
+        BUFFERQUEUE,
     };
 };
 
@@ -103,6 +112,14 @@ c2_status_t CreateCodec2BlockPool(
  * \retval nullptr if the platform component store could not be obtained
  */
 std::shared_ptr<C2ComponentStore> GetCodec2PlatformComponentStore();
+
+/**
+ * Sets the preferred component store in this process for the sole purpose of accessing its
+ * interface. If this is not called, the default IComponentStore HAL (if exists) is the preferred
+ * store for this purpose. If the default IComponentStore HAL is not present, the platform
+ * component store is used.
+ */
+void SetPreferredCodec2ComponentStore(std::shared_ptr<C2ComponentStore> store);
 
 } // namespace android
 

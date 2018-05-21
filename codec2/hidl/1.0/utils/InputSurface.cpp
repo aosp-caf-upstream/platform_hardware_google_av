@@ -24,7 +24,9 @@
 #include <hidl/HidlBinderSupport.h>
 #include <hwbinder/IBinder.h>
 
+#include <util/C2InterfaceHelper.h>
 #include <C2Component.h>
+#include <C2Config.h>
 
 #include <memory>
 
@@ -39,8 +41,91 @@ using namespace ::android;
 using ::android::hardware::IBinder;
 using ::android::hardware::toBinder;
 
+class InputSurface::ConfigurableImpl : public C2InterfaceHelper {
+public:
+    explicit ConfigurableImpl(
+            const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
+
+        setDerivedInstance(this);
+
+        addParameter(
+                DefineParam(mEos, C2_NAME_INPUT_SURFACE_EOS_TUNING)
+                .withDefault(new C2InputSurfaceEosTuning(false))
+                .withFields({C2F(mEos, value).oneOf({true, false})})
+                .withSetter(EosSetter)
+                .build());
+    }
+
+    static C2R EosSetter(bool mayBlock, C2P<C2InputSurfaceEosTuning> &me) {
+        (void)mayBlock;
+        return me.F(me.v.value).validatePossible(me.v.value);
+    }
+
+    bool eos() const { return mEos->value; }
+
+private:
+    std::shared_ptr<C2InputSurfaceEosTuning> mEos;
+};
+
+namespace {
+
+class ConfigurableWrapper : public ConfigurableC2Intf {
+public:
+    ConfigurableWrapper(
+            const std::shared_ptr<InputSurface::ConfigurableImpl> &impl,
+            const sp<GraphicBufferSource> &source)
+        : ConfigurableC2Intf("input-surface"),
+          mImpl(impl),
+          mSource(source) {
+    }
+
+    ~ConfigurableWrapper() override = default;
+
+    c2_status_t query(
+            const std::vector<C2Param::Index> &indices,
+            c2_blocking_t mayBlock,
+            std::vector<std::unique_ptr<C2Param>>* const params) const override {
+        return mImpl->query({}, indices, mayBlock, params);
+    }
+
+    c2_status_t config(
+            const std::vector<C2Param*> &params,
+            c2_blocking_t mayBlock,
+            std::vector<std::unique_ptr<C2SettingResult>>* const failures) override {
+        c2_status_t err = mImpl->config(params, mayBlock, failures);
+        if (mImpl->eos()) {
+            sp<GraphicBufferSource> source = mSource.promote();
+            if (source == nullptr || source->signalEndOfInputStream() != OK) {
+                // TODO: put something in |failures|
+                err = C2_BAD_VALUE;
+            }
+            // TODO: reset eos?
+        }
+        return err;
+    }
+
+    c2_status_t querySupportedParams(
+            std::vector<std::shared_ptr<C2ParamDescriptor>>* const params) const override {
+        return mImpl->querySupportedParams(params);
+    }
+
+    c2_status_t querySupportedValues(
+            std::vector<C2FieldSupportedValuesQuery>& fields,
+            c2_blocking_t mayBlock) const override {
+        return mImpl->querySupportedValues(fields, mayBlock);
+    }
+
+private:
+    const std::shared_ptr<InputSurface::ConfigurableImpl> mImpl;
+    wp<GraphicBufferSource> mSource;
+};
+
+}  // namespace
+
+
 Return<void> InputSurface::connectToComponent(
-        const sp<IBase>& component,
+        const sp<IComponent>& component,
         connectToComponent_cb _hidl_cb) {
     Status status;
     sp<IBinder> binder = toBinder(component);
@@ -66,8 +151,7 @@ Return<void> InputSurface::connectToComponent(
 }
 
 Return<sp<IConfigurable>> InputSurface::getConfigurable() {
-    // TODO: Implement
-    return nullptr;
+    return mConfigurable;
 }
 
 // Derived methods from IGraphicBufferProducer
@@ -213,7 +297,13 @@ InputSurface::InputSurface(
         const sp<GraphicBufferSource>& source) :
     mStore(store),
     mBase(base),
-    mSource(source) {
+    mSource(source),
+    mHelper(std::make_shared<ConfigurableImpl>(
+            std::static_pointer_cast<C2ReflectorHelper>(store->mParamReflector))),
+    mConfigurable(new CachedConfigurable(
+            std::make_unique<ConfigurableWrapper>(mHelper, source))) {
+
+    mConfigurable->init(store.get());
 }
 
 }  // namespace utils

@@ -39,6 +39,7 @@ using android::hardware::media::bufferpool::V1_0::implementation::BufferPoolAllo
 using android::hardware::media::bufferpool::V1_0::implementation::BufferPoolAllocator;
 using android::hardware::media::bufferpool::V1_0::implementation::ClientManager;
 using android::hardware::media::bufferpool::V1_0::implementation::ConnectionId;
+using android::hardware::media::bufferpool::V1_0::implementation::INVALID_CONNECTIONID;
 
 // This anonymous namespace contains the helper classes that allow our implementation to create
 // block/buffer objects.
@@ -346,12 +347,11 @@ c2_status_t C2BasicLinearBlockPool::fetchLinearBlock(
 
 struct C2_HIDE C2PooledBlockPoolData : _C2BlockPoolData {
 
-    virtual Type getType() const override {
+    virtual type_t getType() const override {
         return TYPE_BUFFERPOOL;
     }
 
     void getBufferPoolData(std::shared_ptr<BufferPoolData> *data) const {
-        data->reset();
         *data = mData;
     }
 
@@ -408,13 +408,13 @@ std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
 }
 
 std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
-        const std::shared_ptr<BufferPoolData> &data) {
+        const C2Handle *cHandle, const std::shared_ptr<BufferPoolData> &data) {
     // TODO: get proper allocator? and mutex?
     static std::unique_ptr<C2AllocatorIon> sAllocator = std::make_unique<C2AllocatorIon>(0);
 
     std::shared_ptr<C2LinearAllocation> alloc;
-    if (C2AllocatorIon::isValid(data->mHandle)) {
-        native_handle_t *handle = native_handle_clone(data->mHandle);
+    if (C2AllocatorIon::isValid(cHandle)) {
+        native_handle_t *handle = native_handle_clone(cHandle);
         if (handle) {
             c2_status_t err = sAllocator->priorLinearAllocation(handle, &alloc);
             const std::shared_ptr<C2PooledBlockPoolData> poolData =
@@ -636,11 +636,11 @@ public:
         std::vector<uint8_t> params;
         mAllocator->getLinearParams(capacity, usage, &params);
         std::shared_ptr<BufferPoolData> bufferPoolData;
+        native_handle_t *cHandle = nullptr;
         ResultStatus status = mBufferPoolManager->allocate(
-                mConnectionId, params, &bufferPoolData);
+                mConnectionId, params, &cHandle, &bufferPoolData);
         if (status == ResultStatus::OK) {
-            native_handle_t *handle = bufferPoolData ?
-                    native_handle_clone(bufferPoolData->mHandle) : nullptr;
+            native_handle_t *handle = native_handle_clone(cHandle);
             if (handle) {
                 std::shared_ptr<C2LinearAllocation> alloc;
                 std::shared_ptr<C2PooledBlockPoolData> poolData =
@@ -662,7 +662,7 @@ public:
     }
 
     ConnectionId getConnectionId() {
-        return mInit != C2_OK ? 0 : mConnectionId;
+        return mInit != C2_OK ? INVALID_CONNECTIONID : mConnectionId;
     }
 
     bool getAccessor(android::sp<IAccessor> *accessor) {
@@ -1040,13 +1040,14 @@ std::shared_ptr<const _C2BlockPoolData> _C2BlockFactory::GetGraphicBlockPoolData
 }
 
 std::shared_ptr<C2GraphicBlock> _C2BlockFactory::CreateGraphicBlock(
+        const C2Handle *cHandle,
         const std::shared_ptr<BufferPoolData> &data) {
     // TODO: get proper allocator? and mutex?
     static std::unique_ptr<C2AllocatorGralloc> sAllocator = std::make_unique<C2AllocatorGralloc>(0);
 
     std::shared_ptr<C2GraphicAllocation> alloc;
-    if (C2AllocatorGralloc::isValid(data->mHandle)) {
-        native_handle_t *handle = native_handle_clone(data->mHandle);
+    if (C2AllocatorGralloc::isValid(cHandle)) {
+        native_handle_t *handle = native_handle_clone(cHandle);
         if (handle) {
             c2_status_t err = sAllocator->priorGraphicAllocation(handle, &alloc);
             const std::shared_ptr<C2PooledBlockPoolData> poolData =

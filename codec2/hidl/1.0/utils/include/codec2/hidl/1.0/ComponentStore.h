@@ -94,8 +94,6 @@ protected:
             mStructDescriptors;
     mutable std::mutex mStructDescriptorsMutex;
 
-    sp<IClientManager> mPoolManager;
-
     // Component lifetime management
     Component::Roster mComponentRoster;
     mutable std::mutex mComponentRosterMutex;
@@ -104,8 +102,7 @@ protected:
     friend Component;
 
     // C2Component lookup
-    std::shared_ptr<C2Component> findC2Component(const wp<IBinder>& binder)
-            const;
+    std::shared_ptr<C2Component> findC2Component(const wp<IBinder>& binder) const;
 
     friend struct InputSurface;
 };

@@ -28,7 +28,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.gsm.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.gsm.decoder";
 
 class C2SoftGSM::IntfImpl : public C2InterfaceHelper {
    public:

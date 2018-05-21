@@ -217,6 +217,30 @@ private:
 };
 
 /**
+ * MediaCodecBuffer implementation wraps around VideoNativeMetadata.
+ */
+class GraphicMetadataBuffer : public Codec2Buffer {
+public:
+    /**
+     * Construct a new GraphicMetadataBuffer with local linear buffer for
+     * VideoNativeMetadata.
+     *
+     * \param   format      mandatory buffer format for MediaCodecBuffer
+     */
+    GraphicMetadataBuffer(
+            const sp<AMessage> &format, const std::shared_ptr<C2Allocator> &alloc);
+
+    std::shared_ptr<C2Buffer> asC2Buffer() override;
+
+    virtual ~GraphicMetadataBuffer() = default;
+
+private:
+    GraphicMetadataBuffer() = delete;
+
+    std::shared_ptr<C2Allocator> mAlloc;
+};
+
+/**
  * MediaCodecBuffer implementation wraps around graphic C2Buffer object.
  *
  * This object exposes the underlying bits via accessor APIs and "image-data"

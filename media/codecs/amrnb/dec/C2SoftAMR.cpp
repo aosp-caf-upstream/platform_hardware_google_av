@@ -32,9 +32,9 @@
 namespace android {
 
 #ifdef AMRNB
-  constexpr char COMPONENT_NAME[] = "c2.google.amrnb.decoder";
+  constexpr char COMPONENT_NAME[] = "c2.android.amrnb.decoder";
 #else
-  constexpr char COMPONENT_NAME[] = "c2.google.amrwb.decoder";
+  constexpr char COMPONENT_NAME[] = "c2.android.amrwb.decoder";
 #endif
 
 class C2SoftAMR::IntfImpl : public C2InterfaceHelper {

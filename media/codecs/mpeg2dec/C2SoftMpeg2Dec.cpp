@@ -32,7 +32,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.mpeg2.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.mpeg2.decoder";
 
 class C2SoftMpeg2Dec::IntfImpl : public C2InterfaceHelper {
 public:

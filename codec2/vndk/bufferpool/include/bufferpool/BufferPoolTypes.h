@@ -32,30 +32,20 @@ namespace bufferpool {
 struct BufferPoolData {
     // For local use, to specify a bufferpool (client connection) for buffers.
     // Return value from connect#IAccessor(android.hardware.media.bufferpool@1.0).
-    // high 32 bit = pid of IAccessor : low 32 bit = sequence Id for connect
     int64_t mConnectionId;
     // BufferId
     uint32_t mId;
     // Accessor accosiated to the buffer.
     wp<V1_0::IAccessor> mAccessor;
-    // mHandle is owned if not null, i.e., it will be closed and deleted in
-    // ~BufferPoolData().
-    native_handle_t *mHandle;
 
-    BufferPoolData() : mConnectionId(0), mId(0), mAccessor(nullptr), mHandle(NULL) {}
+    BufferPoolData() : mConnectionId(0), mId(0), mAccessor(nullptr) {}
 
     BufferPoolData(
             int64_t connectionId, uint32_t id,
-            wp<V1_0::IAccessor> accessor,
-            native_handle_t *handle)
-            : mConnectionId(connectionId), mId(id), mAccessor(accessor), mHandle(handle) {}
+            wp<V1_0::IAccessor> accessor)
+            : mConnectionId(connectionId), mId(id), mAccessor(accessor) {}
 
-    ~BufferPoolData() {
-        if (mHandle) {
-            native_handle_close(mHandle);
-            native_handle_delete(mHandle);
-        }
-    }
+    ~BufferPoolData() {}
 };
 
 namespace V1_0 {
@@ -66,6 +56,10 @@ using ::android::hardware::kSynchronizedReadWrite;
 typedef uint32_t BufferId;
 typedef uint64_t TransactionId;
 typedef int64_t ConnectionId;
+
+enum : ConnectionId {
+    INVALID_CONNECTIONID = 0,
+};
 
 typedef android::hardware::MessageQueue<BufferStatusMessage, kSynchronizedReadWrite> BufferStatusQueue;
 typedef BufferStatusQueue::Descriptor QueueDescriptor;

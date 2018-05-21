@@ -18,18 +18,22 @@
 #define HARDWARE_GOOGLE_MEDIA_C2_V1_0_UTILS_COMPONENT_H
 
 #include <codec2/hidl/1.0/Configurable.h>
+#include <codec2/hidl/1.0/types.h>
 
+#include <android/hardware/media/bufferpool/1.0/IClientManager.h>
 #include <hardware/google/media/c2/1.0/IComponentListener.h>
 #include <hardware/google/media/c2/1.0/IComponentStore.h>
 #include <hardware/google/media/c2/1.0/IComponent.h>
-#include <hidl/MQDescriptor.h>
 #include <hidl/Status.h>
 #include <hwbinder/IBinder.h>
 
 #include <C2Component.h>
+#include <C2Buffer.h>
 #include <C2.h>
 
+#include <list>
 #include <map>
+#include <memory>
 
 namespace hardware {
 namespace google {
@@ -66,7 +70,10 @@ struct Component : public Configurable<IComponent> {
     Component(
             const std::shared_ptr<C2Component>&,
             const sp<IComponentListener>& listener,
-            const sp<ComponentStore>& store);
+            const sp<ComponentStore>& store,
+            const sp<::android::hardware::media::bufferpool::V1_0::
+                IClientManager>& clientPoolManager);
+    c2_status_t status() const;
 
     typedef ::android::hardware::graphics::bufferqueue::V1_0::
             IGraphicBufferProducer HGraphicBufferProducer;
@@ -78,8 +85,6 @@ struct Component : public Configurable<IComponent> {
     virtual Return<Status> setOutputSurface(
             uint64_t blockPoolId,
             const sp<HGraphicBufferProducer>& surface) override;
-    virtual Return<Status> connectToInputSurface(
-            const sp<IInputSurface>& surface) override;
     virtual Return<Status> connectToOmxInputSurface(
             const sp<HGraphicBufferProducer>& producer,
             const sp<::android::hardware::media::omx::V1_0::
@@ -88,6 +93,7 @@ struct Component : public Configurable<IComponent> {
     virtual Return<void> createBlockPool(
             uint32_t allocatorId,
             createBlockPool_cb _hidl_cb) override;
+    virtual Return<Status> destroyBlockPool(uint64_t blockPoolId) override;
     virtual Return<Status> start() override;
     virtual Return<Status> stop() override;
     virtual Return<Status> reset() override;
@@ -99,8 +105,16 @@ protected:
     std::shared_ptr<C2ComponentInterface> mInterface;
     sp<IComponentListener> mListener;
     sp<ComponentStore> mStore;
+    ::hardware::google::media::c2::V1_0::utils::DefaultBufferPoolSender
+            mBufferPoolSender;
 
-    struct ComparePointer {
+    std::mutex mBlockPoolsMutex;
+    // This map keeps C2BlockPool objects that are created by createBlockPool()
+    // alive. These C2BlockPool objects can be deleted by calling
+    // destroyBlockPool(), reset() or release(), or by destroying the component.
+    std::map<uint64_t, std::shared_ptr<C2BlockPool>> mBlockPools;
+
+    struct CompareRawPointer {
         constexpr bool operator()(
                 const wp<IBinder>& x, const wp<IBinder>& y) const {
             return std::less<IBinder*>()(x.unsafe_get(), y.unsafe_get());
@@ -109,14 +123,18 @@ protected:
 
     // Component lifetime management
     typedef std::map<wp<IBinder>, std::weak_ptr<C2Component>,
-            ComparePointer> Roster;
+            CompareRawPointer> Roster;
     typedef Roster::const_iterator LocalId;
     LocalId mLocalId;
-
     void setLocalId(const LocalId& localId);
+
+    void initListener(const sp<Component>& self);
+
     virtual ~Component() override;
 
     friend struct ComponentStore;
+
+    struct Listener;
 };
 
 }  // namespace utils

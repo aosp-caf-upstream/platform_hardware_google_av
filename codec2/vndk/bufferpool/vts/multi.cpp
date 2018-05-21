@@ -79,6 +79,7 @@ class BufferpoolMultiTest : public ::testing::Test {
   virtual void SetUp() override {
     ResultStatus status;
     mReceiverPid = -1;
+    mConnectionValid = false;
 
     ASSERT_TRUE(pipe(mCommandPipeFds) == 0);
     ASSERT_TRUE(pipe(mResultPipeFds) == 0);
@@ -87,8 +88,10 @@ class BufferpoolMultiTest : public ::testing::Test {
     ASSERT_TRUE(mReceiverPid >= 0);
 
     if (mReceiverPid == 0) {
-       doReceiver();
-       return;
+      doReceiver();
+      // In order to ignore gtest behaviour, wait for being killed from
+      // tearDown
+      pause();
     }
 
     mManager = ClientManager::getInstance();
@@ -103,17 +106,22 @@ class BufferpoolMultiTest : public ::testing::Test {
 
     status = mManager->create(mAllocator, &mConnectionId);
     ASSERT_TRUE(status == ResultStatus::OK);
+    mConnectionValid = true;
 
     status = mManager->getAccessor(mConnectionId, &mAccessor);
     ASSERT_TRUE(status == ResultStatus::OK && (bool)mAccessor);
   }
 
   virtual void TearDown() override {
-      if (mReceiverPid > 0) {
-          kill(mReceiverPid, SIGKILL);
-          int wstatus;
-          wait(&wstatus);
-      }
+    if (mReceiverPid > 0) {
+      kill(mReceiverPid, SIGKILL);
+      int wstatus;
+      wait(&wstatus);
+    }
+
+    if (mConnectionValid) {
+      mManager->close(mConnectionId);
+    }
   }
 
  protected:
@@ -124,6 +132,7 @@ class BufferpoolMultiTest : public ::testing::Test {
   android::sp<ClientManager> mManager;
   android::sp<IAccessor> mAccessor;
   std::shared_ptr<BufferPoolAllocator> mAllocator;
+  bool mConnectionValid;
   ConnectionId mConnectionId;
   pid_t mReceiverPid;
   int mCommandPipeFds[2];
@@ -159,10 +168,12 @@ class BufferpoolMultiTest : public ::testing::Test {
 
     receiveMessage(mCommandPipeFds, &message);
     {
+      native_handle_t *rhandle = nullptr;
       std::shared_ptr<BufferPoolData> rbuffer;
       ResultStatus status = mManager->receive(
           message.data.connectionId, message.data.transactionId,
-          message.data.bufferId, message.data.timestampUs, &rbuffer);
+          message.data.bufferId, message.data.timestampUs, &rhandle, &rbuffer);
+      mManager->close(message.data.connectionId);
       if (status != ResultStatus::OK) {
         message.data.command = PipeCommand::RECEIVE_ERROR;
         sendMessage(mResultPipeFds, message);
@@ -171,7 +182,6 @@ class BufferpoolMultiTest : public ::testing::Test {
     }
     message.data.command = PipeCommand::RECEIVE_OK;
     sendMessage(mResultPipeFds, message);
-    while(1); // An easy way to ignore gtest behaviour.
   }
 };
 
@@ -194,13 +204,14 @@ TEST_F(BufferpoolMultiTest, TransferBuffer) {
       });
   ASSERT_TRUE(status == ResultStatus::OK);
   {
+    native_handle_t *shandle = nullptr;
     std::shared_ptr<BufferPoolData> sbuffer;
     TransactionId transactionId;
     int64_t postUs;
     std::vector<uint8_t> vecParams;
 
     getVtsAllocatorParams(&vecParams);
-    status = mManager->allocate(mConnectionId, vecParams, &sbuffer);
+    status = mManager->allocate(mConnectionId, vecParams, &shandle, &sbuffer);
     ASSERT_TRUE(status == ResultStatus::OK);
 
     status = mManager->postSend(receiverId, sbuffer, &transactionId, &postUs);

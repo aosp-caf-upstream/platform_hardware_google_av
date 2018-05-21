@@ -127,7 +127,7 @@ private:
     std::shared_ptr<C2StreamAacFormatInfo::input> mAacFormat;
 };
 
-constexpr char COMPONENT_NAME[] = "c2.google.aac.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.aac.decoder";
 
 C2SoftAac::C2SoftAac(
         const char *name,
@@ -350,7 +350,6 @@ int32_t C2SoftAac::outputDelayRingBufferSpaceLeft() {
 void C2SoftAac::drainRingBuffer(
         const std::unique_ptr<C2Work> &work,
         const std::shared_ptr<C2BlockPool> &pool,
-        std::vector<std::unique_ptr<C2Param>> *configUpdate,
         bool eos) {
     while (!mBuffersInfo.empty() && outputDelayRingBufferSamplesAvailable()
             >= mStreamInfo->frameSize * mStreamInfo->numChannels) {
@@ -374,18 +373,15 @@ void C2SoftAac::drainRingBuffer(
 
         std::shared_ptr<C2LinearBlock> block;
         std::function<void(const std::unique_ptr<C2Work>&)> fillWork =
-            [&block, numSamples, pool, configUpdate, this]()
+            [&block, numSamples, pool, this]()
                     -> std::function<void(const std::unique_ptr<C2Work>&)> {
-                auto fillEmptyWork = [configUpdate](
+                auto fillEmptyWork = [](
                         const std::unique_ptr<C2Work> &work, c2_status_t err) {
                     work->result = err;
                     C2FrameData &output = work->worklets.front()->output;
                     output.flags = work->input.flags;
                     output.buffers.clear();
                     output.ordinal = work->input.ordinal;
-                    while (configUpdate && !configUpdate->empty()) {
-                        output.configUpdate.push_back(std::move(configUpdate->front()));
-                    }
 
                     work->workletsProcessed = 1u;
                 };
@@ -413,7 +409,7 @@ void C2SoftAac::drainRingBuffer(
                     mSignalledError = true;
                     return std::bind(fillEmptyWork, _1, C2_CORRUPTED);
                 }
-                return [buffer = createLinearBuffer(block), configUpdate](
+                return [buffer = createLinearBuffer(block)](
                         const std::unique_ptr<C2Work> &work) {
                     work->result = C2_OK;
                     C2FrameData &output = work->worklets.front()->output;
@@ -421,9 +417,6 @@ void C2SoftAac::drainRingBuffer(
                     output.buffers.clear();
                     output.buffers.push_back(buffer);
                     output.ordinal = work->input.ordinal;
-                    while (configUpdate && !configUpdate->empty()) {
-                        output.configUpdate.push_back(std::move(configUpdate->front()));
-                    }
                     work->workletsProcessed = 1u;
                 };
             }();
@@ -491,7 +484,6 @@ void C2SoftAac::process(
         return;
     }
 
-    std::vector<std::unique_ptr<C2Param>> configUpdate{};
     Info inInfo;
     inInfo.frameIndex = work->input.ordinal.frameIndex.peeku();
     inInfo.timestamp = work->input.ordinal.timestamp.peeku();
@@ -676,8 +668,9 @@ void C2SoftAac::process(
                 if (err == OK) {
                     // TODO: this does not handle the case where the values are
                     //       altered during config.
-                    configUpdate.push_back(C2Param::Copy(sampleRateInfo));
-                    configUpdate.push_back(C2Param::Copy(channelCountInfo));
+                    C2FrameData &output = work->worklets.front()->output;
+                    output.configUpdate.push_back(C2Param::Copy(sampleRateInfo));
+                    output.configUpdate.push_back(C2Param::Copy(channelCountInfo));
                 }
                 // TODO: error handling
             }
@@ -702,17 +695,16 @@ void C2SoftAac::process(
     }
 
     if (eos) {
-        drainInternal(DRAIN_COMPONENT_WITH_EOS, pool, work, &configUpdate);
+        drainInternal(DRAIN_COMPONENT_WITH_EOS, pool, work);
     } else {
-        drainRingBuffer(work, pool, &configUpdate, false /* not EOS */);
+        drainRingBuffer(work, pool, false /* not EOS */);
     }
 }
 
 c2_status_t C2SoftAac::drainInternal(
         uint32_t drainMode,
         const std::shared_ptr<C2BlockPool> &pool,
-        const std::unique_ptr<C2Work> &work,
-        std::vector<std::unique_ptr<C2Param>> *configUpdate) {
+        const std::unique_ptr<C2Work> &work) {
     if (drainMode == NO_DRAIN) {
         ALOGW("drain with NO_DRAIN: no-op");
         return C2_OK;
@@ -725,7 +717,7 @@ c2_status_t C2SoftAac::drainInternal(
     bool eos = (drainMode == DRAIN_COMPONENT_WITH_EOS);
 
     drainDecoder();
-    drainRingBuffer(work, pool, configUpdate, eos);
+    drainRingBuffer(work, pool, eos);
 
     if (eos) {
         auto fillEmptyWork = [](const std::unique_ptr<C2Work> &work) {

@@ -38,9 +38,9 @@
 namespace android {
 
 #ifdef MPEG4
-constexpr char COMPONENT_NAME[] = "c2.google.mpeg4.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.mpeg4.encoder";
 #else
-constexpr char COMPONENT_NAME[] = "c2.google.h263.encoder";
+constexpr char COMPONENT_NAME[] = "c2.android.h263.encoder";
 #endif
 
 class C2SoftMpeg4Enc::IntfImpl : public C2InterfaceHelper {

@@ -32,7 +32,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.mp3.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.mp3.decoder";
 
 class C2SoftMP3::IntfImpl : public C2InterfaceHelper {
 public:

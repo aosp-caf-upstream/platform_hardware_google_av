@@ -28,7 +28,7 @@
 
 namespace android {
 
-constexpr char COMPONENT_NAME[] = "c2.google.flac.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.flac.decoder";
 
 class C2SoftFlacDecoder::IntfImpl : public C2InterfaceHelper {
 public:

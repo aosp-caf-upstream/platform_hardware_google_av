@@ -33,7 +33,7 @@ extern "C" {
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.google.opus.decoder";
+constexpr char kComponentName[] = "c2.android.opus.decoder";
 
 static std::shared_ptr<C2ComponentInterface> BuildIntf(
         const char *name, c2_node_id_t id,

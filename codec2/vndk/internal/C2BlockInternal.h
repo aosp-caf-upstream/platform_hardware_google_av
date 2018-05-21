@@ -35,12 +35,12 @@ struct BufferPoolData;
  * Stores informations from C2BlockPool implementations which are required by C2Block.
  */
 struct C2_HIDE _C2BlockPoolData {
-    enum Type : int {
+    enum type_t : int {
         TYPE_BUFFERPOOL = 0,
         TYPE_BUFFERQUEUE,
     };
 
-    virtual Type getType() const = 0;
+    virtual type_t getType() const = 0;
 
 protected:
     _C2BlockPoolData() = default;
@@ -140,6 +140,7 @@ struct _C2BlockFactory {
      */
     static
     std::shared_ptr<C2LinearBlock> CreateLinearBlock(
+            const C2Handle *handle,
             const std::shared_ptr<android::hardware::media::bufferpool::BufferPoolData> &data);
 
     /**
@@ -152,6 +153,7 @@ struct _C2BlockFactory {
      */
     static
     std::shared_ptr<C2GraphicBlock> CreateGraphicBlock(
+            const C2Handle *handle,
             const std::shared_ptr<android::hardware::media::bufferpool::BufferPoolData> &data);
 
     /**

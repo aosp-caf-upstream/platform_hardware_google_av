@@ -18,6 +18,7 @@
 #define LOG_TAG "Codec2-Component"
 #include <log/log.h>
 
+#include <C2PlatformSupport.h>
 #include <codec2/hidl/1.0/Component.h>
 #include <codec2/hidl/1.0/ComponentStore.h>
 #include <codec2/hidl/1.0/types.h>
@@ -33,6 +34,8 @@ namespace V1_0 {
 namespace utils {
 
 using namespace ::android;
+
+namespace /* unnamed */ {
 
 // Implementation of ConfigurableC2Intf based on C2ComponentInterface
 struct CompIntf : public ConfigurableC2Intf {
@@ -77,6 +80,8 @@ protected:
     std::shared_ptr<C2ComponentInterface> mIntf;
 };
 
+} // unnamed namespace
+
 // ComponentInterface
 ComponentInterface::ComponentInterface(
         const std::shared_ptr<C2ComponentInterface>& intf,
@@ -91,10 +96,11 @@ c2_status_t ComponentInterface::status() const {
 }
 
 // ComponentListener wrapper
-struct Listener : public C2Component::Listener {
-    Listener(const wp<IComponentListener>& listener) : mListener(listener) {
-        // TODO: Should we track interface errors? We could reuse onError() or
-        // create our own error channel.
+struct Component::Listener : public C2Component::Listener {
+
+    Listener(const sp<Component>& component) :
+        mComponent(component),
+        mListener(component->mListener) {
     }
 
     virtual void onError_nb(
@@ -103,7 +109,10 @@ struct Listener : public C2Component::Listener {
         ALOGV("onError");
         sp<IComponentListener> listener = mListener.promote();
         if (listener) {
-            listener->onError(Status::OK, errorCode);
+            Return<void> transStatus = listener->onError(Status::OK, errorCode);
+            if (!transStatus.isOk()) {
+                ALOGE("onError -- transaction failed.");
+            }
         }
     }
 
@@ -126,7 +135,10 @@ struct Listener : public C2Component::Listener {
                 }
             }
             settingResults.resize(ix);
-            listener->onTripped(settingResults);
+            Return<void> transStatus = listener->onTripped(settingResults);
+            if (!transStatus.isOk()) {
+                ALOGE("onTripped -- transaction failed.");
+            }
         }
     }
 
@@ -138,18 +150,24 @@ struct Listener : public C2Component::Listener {
         if (listener) {
             WorkBundle workBundle;
 
-            // TODO: Connect with bufferpool API to send Works & Buffers
-            if (objcpy(&workBundle, c2workItems) != Status::OK) {
+            sp<Component> strongComponent = mComponent.promote();
+            if (objcpy(&workBundle, c2workItems, strongComponent ?
+                    &strongComponent->mBufferPoolSender : nullptr)
+                    != Status::OK) {
                 ALOGE("onWorkDone() received corrupted work items.");
                 return;
             }
-            listener->onWorkDone(workBundle);
+            Return<void> transStatus = listener->onWorkDone(workBundle);
+            if (!transStatus.isOk()) {
+                ALOGE("onWorkDone -- transaction failed.");
+            }
 
             // Finish buffer transfers: nothing else to do
         }
     }
 
 protected:
+    wp<Component> mComponent;
     wp<IComponentListener> mListener;
 };
 
@@ -157,20 +175,23 @@ protected:
 Component::Component(
         const std::shared_ptr<C2Component>& component,
         const sp<IComponentListener>& listener,
-        const sp<ComponentStore>& store) :
+        const sp<ComponentStore>& store,
+        const sp<::android::hardware::media::bufferpool::V1_0::
+        IClientManager>& clientPoolManager) :
     Configurable(new CachedConfigurable(
             std::make_unique<CompIntf>(component->intf()))),
     mComponent(component),
     mInterface(component->intf()),
     mListener(listener),
-    mStore(store) {
-    std::shared_ptr<C2Component::Listener> c2listener =
-            std::make_shared<Listener>(listener);
-    c2_status_t res = mComponent->setListener_vb(c2listener, C2_DONT_BLOCK);
+    mStore(store),
+    mBufferPoolSender(clientPoolManager) {
     // Retrieve supported parameters from store
     // TODO: We could cache this per component/interface type
     mInit = init(store.get());
-    mInit = mInit != C2_OK ? res : mInit;
+}
+
+c2_status_t Component::status() const {
+    return mInit;
 }
 
 // Methods from ::android::hardware::media::c2::V1_0::IComponent
@@ -199,7 +220,7 @@ Return<void> Component::flush(flush_cb _hidl_cb) {
     if (c2res == C2_OK) {
         // TODO: Connect with bufferpool API for buffer transfers
         ALOGV("flush -- converting output");
-        res = objcpy(&flushedWorkBundle, c2flushedWorks);
+        res = objcpy(&flushedWorkBundle, c2flushedWorks, &mBufferPoolSender);
     }
     _hidl_cb(res, flushedWorkBundle);
     return Void();
@@ -217,7 +238,7 @@ Return<Status> Component::setOutputSurface(
         const sp<HGraphicBufferProducer>& surface) {
     std::shared_ptr<C2BlockPool> pool;
     GetCodec2BlockPool(blockPoolId, mComponent, &pool);
-    if (pool && pool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC) {
+    if (pool && pool->getAllocatorId() == C2PlatformAllocatorStore::BUFFERQUEUE) {
         std::shared_ptr<C2BufferQueueBlockPool> bqPool =
                 std::static_pointer_cast<C2BufferQueueBlockPool>(pool);
         if (bqPool) {
@@ -225,13 +246,6 @@ Return<Status> Component::setOutputSurface(
         }
     }
     return Status::OK;
-}
-
-Return<Status> Component::connectToInputSurface(
-        const sp<IInputSurface>& surface) {
-    // TODO implement
-    (void)surface;
-    return Status::OMITTED;
 }
 
 Return<Status> Component::connectToOmxInputSurface(
@@ -252,16 +266,32 @@ Return<Status> Component::disconnectFromInputSurface() {
 Return<void> Component::createBlockPool(
         uint32_t allocatorId,
         createBlockPool_cb _hidl_cb) {
-    // TODO: Store created pool to the component.
-    std::shared_ptr<C2BlockPool> pool;
-    c2_status_t c2res = CreateCodec2BlockPool(allocatorId, mComponent, &pool);
-    Status res = static_cast<Status>(c2res);
-    if (c2res == C2_OK) {
-        _hidl_cb(res, pool->getLocalId(), nullptr /* configurable */);
-    } else {
-        _hidl_cb(res, 0 /* blockPoolId */, nullptr /* configurable */);
+    std::shared_ptr<C2BlockPool> blockPool;
+    c2_status_t status = CreateCodec2BlockPool(
+            static_cast<C2PlatformAllocatorStore::id_t>(allocatorId),
+            mComponent,
+            &blockPool);
+    if (status != C2_OK) {
+        blockPool = nullptr;
     }
+    if (blockPool) {
+        mBlockPoolsMutex.lock();
+        mBlockPools.emplace(blockPool->getLocalId(), blockPool);
+        mBlockPoolsMutex.unlock();
+    } else if (status == C2_OK) {
+        status = C2_CORRUPTED;
+    }
+
+    _hidl_cb(static_cast<Status>(status),
+            blockPool ? blockPool->getLocalId() : 0,
+            nullptr /* configurable */);
     return Void();
+}
+
+Return<Status> Component::destroyBlockPool(uint64_t blockPoolId) {
+    std::lock_guard<std::mutex> lock(mBlockPoolsMutex);
+    return mBlockPools.erase(blockPoolId) == 1 ?
+            Status::OK : Status::CORRUPTED;
 }
 
 Return<Status> Component::start() {
@@ -276,16 +306,35 @@ Return<Status> Component::stop() {
 
 Return<Status> Component::reset() {
     ALOGV("reset");
-    return static_cast<Status>(mComponent->reset());
+    Status status = static_cast<Status>(mComponent->reset());
+    {
+        std::lock_guard<std::mutex> lock(mBlockPoolsMutex);
+        mBlockPools.clear();
+    }
+    return status;
 }
 
 Return<Status> Component::release() {
     ALOGV("release");
-    return static_cast<Status>(mComponent->release());
+    Status status = static_cast<Status>(mComponent->release());
+    {
+        std::lock_guard<std::mutex> lock(mBlockPoolsMutex);
+        mBlockPools.clear();
+    }
+    return status;
 }
 
 void Component::setLocalId(const Component::LocalId& localId) {
     mLocalId = localId;
+}
+
+void Component::initListener(const sp<Component>& self) {
+    std::shared_ptr<C2Component::Listener> c2listener =
+            std::make_shared<Listener>(self);
+    c2_status_t res = mComponent->setListener_vb(c2listener, C2_DONT_BLOCK);
+    if (res != C2_OK) {
+        mInit = res;
+    }
 }
 
 Component::~Component() {

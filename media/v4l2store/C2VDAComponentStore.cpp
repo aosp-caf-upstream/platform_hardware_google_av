@@ -224,7 +224,7 @@ std::shared_ptr<const C2Component::Traits> C2VDAComponentStore::ComponentModule:
             }
             traits->mediaType = mediaTypeConfig->m.value;
             // TODO: get this properly.
-            // Set the rank prior to c2.google.* (=0x200) and after OMX.google.* (=0x100) by now.
+            // Set the rank prior to c2.android.* (=0x200) and after OMX.google.* (=0x100) by now.
             // In the future this should be prior to OMX.google.* as well so that ARC HW codec
             // would be the first priority.
             traits->rank = 0x180;

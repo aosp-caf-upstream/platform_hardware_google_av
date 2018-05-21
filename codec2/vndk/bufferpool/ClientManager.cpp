@@ -43,12 +43,14 @@ public:
 
     ResultStatus allocate(ConnectionId connectionId,
                           const std::vector<uint8_t> &params,
+                          native_handle_t **handle,
                           std::shared_ptr<BufferPoolData> *buffer);
 
     ResultStatus receive(ConnectionId connectionId,
                          TransactionId transactionId,
                          BufferId bufferId,
                          int64_t timestampUs,
+                         native_handle_t **handle,
                          std::shared_ptr<BufferPoolData> *buffer);
 
     ResultStatus postSend(ConnectionId receiverId,
@@ -181,7 +183,7 @@ ResultStatus ClientManager::Impl::close(ConnectionId connectionId) {
 
 ResultStatus ClientManager::Impl::allocate(
         ConnectionId connectionId, const std::vector<uint8_t> &params,
-        std::shared_ptr<BufferPoolData> *buffer) {
+        native_handle_t **handle, std::shared_ptr<BufferPoolData> *buffer) {
     std::shared_ptr<BufferPoolClient> client;
     {
         std::lock_guard<std::mutex> lock(mActive.mMutex);
@@ -191,13 +193,13 @@ ResultStatus ClientManager::Impl::allocate(
         }
         client = it->second;
     }
-    return client->allocate(params, buffer);
+    return client->allocate(params, handle, buffer);
 }
 
 ResultStatus ClientManager::Impl::receive(
         ConnectionId connectionId, TransactionId transactionId,
         BufferId bufferId, int64_t timestampUs,
-        std::shared_ptr<BufferPoolData> *buffer) {
+        native_handle_t **handle, std::shared_ptr<BufferPoolData> *buffer) {
     std::shared_ptr<BufferPoolClient> client;
     {
         std::lock_guard<std::mutex> lock(mActive.mMutex);
@@ -207,7 +209,7 @@ ResultStatus ClientManager::Impl::receive(
         }
         client = it->second;
     }
-    return client->receive(transactionId, bufferId, timestampUs, buffer);
+    return client->receive(transactionId, bufferId, timestampUs, handle, buffer);
 }
 
 ResultStatus ClientManager::Impl::postSend(
@@ -287,9 +289,9 @@ ResultStatus ClientManager::close(ConnectionId connectionId) {
 
 ResultStatus ClientManager::allocate(
         ConnectionId connectionId, const std::vector<uint8_t> &params,
-        std::shared_ptr<BufferPoolData> *buffer) {
+        native_handle_t **handle, std::shared_ptr<BufferPoolData> *buffer) {
     if (mImpl) {
-        return mImpl->allocate(connectionId, params, buffer);
+        return mImpl->allocate(connectionId, params, handle, buffer);
     }
     return ResultStatus::CRITICAL_ERROR;
 }
@@ -297,10 +299,10 @@ ResultStatus ClientManager::allocate(
 ResultStatus ClientManager::receive(
         ConnectionId connectionId, TransactionId transactionId,
         BufferId bufferId, int64_t timestampUs,
-        std::shared_ptr<BufferPoolData> *buffer) {
+        native_handle_t **handle, std::shared_ptr<BufferPoolData> *buffer) {
     if (mImpl) {
         return mImpl->receive(connectionId, transactionId, bufferId,
-                              timestampUs, buffer);
+                              timestampUs, handle, buffer);
     }
     return ResultStatus::CRITICAL_ERROR;
 }
