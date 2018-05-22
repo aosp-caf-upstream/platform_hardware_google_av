@@ -25,6 +25,7 @@ cc_library {
         "android.hardware.media.omx@1.0",
         "android.hardware.media@1.0",
         "hardware.google.media.c2@1.0",
+        "libbase",
         "libcutils",
         "libhidlbase",
         "libhidltransport",

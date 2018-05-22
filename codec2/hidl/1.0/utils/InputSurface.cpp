@@ -21,9 +21,6 @@
 #include <codec2/hidl/1.0/InputSurface.h>
 #include <codec2/hidl/1.0/InputSurfaceConnection.h>
 
-#include <hidl/HidlBinderSupport.h>
-#include <hwbinder/IBinder.h>
-
 #include <util/C2InterfaceHelper.h>
 #include <C2Component.h>
 #include <C2Config.h>
@@ -38,8 +35,6 @@ namespace V1_0 {
 namespace utils {
 
 using namespace ::android;
-using ::android::hardware::IBinder;
-using ::android::hardware::toBinder;
 
 class InputSurface::ConfigurableImpl : public C2InterfaceHelper {
 public:
@@ -128,12 +123,11 @@ Return<void> InputSurface::connectToComponent(
         const sp<IComponent>& component,
         connectToComponent_cb _hidl_cb) {
     Status status;
-    sp<IBinder> binder = toBinder(component);
     sp<InputSurfaceConnection> conn;
-    if (!binder) {
+    if (!component) {
         status = Status::BAD_VALUE;
     } else {
-        std::shared_ptr<C2Component> comp = mStore->findC2Component(binder);
+        std::shared_ptr<C2Component> comp = mStore->findC2Component(component);
         if (!comp) {
             status = Status::BAD_VALUE;
         } else {

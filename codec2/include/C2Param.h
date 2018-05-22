@@ -783,7 +783,18 @@ public:
 
         /** gets value out of the union */
         template<typename T> const T &ref() const;
+
+        // verify that we can assume standard aliasing
+        static_assert(sizeof(u64) == sizeof(i64), "");
+        static_assert(sizeof(u64) == sizeof(c64), "");
+        static_assert(sizeof(u32) == sizeof(i32), "");
+        static_assert(sizeof(u32) == sizeof(c32), "");
     };
+    // verify that we can assume standard aliasing
+    static_assert(offsetof(Primitive, u64) == offsetof(Primitive, i64), "");
+    static_assert(offsetof(Primitive, u64) == offsetof(Primitive, c64), "");
+    static_assert(offsetof(Primitive, u32) == offsetof(Primitive, i32), "");
+    static_assert(offsetof(Primitive, u32) == offsetof(Primitive, c32), "");
 
     enum type_t : uint32_t {
         NO_INIT,
@@ -797,9 +808,15 @@ public:
     };
 
     template<typename T, bool = std::is_enum<T>::value>
-    inline static constexpr type_t typeFor() {
+    inline static constexpr type_t TypeFor() {
         using U = typename std::underlying_type<T>::type;
-        return typeFor<U>();
+        return TypeFor<U>();
+    }
+
+    // deprectated
+    template<typename T, bool B = std::is_enum<T>::value>
+    inline static constexpr type_t typeFor() {
+        return TypeFor<T, B>();
     }
 
     // constructors - implicit
@@ -819,6 +836,29 @@ public:
         return false;
     }
 
+    /// returns the address of the value
+    void *get() const {
+        return _mType == NO_INIT ? nullptr : (void*)&_mValue;
+    }
+
+    /// returns the size of the contained value
+    size_t inline sizeOf() const {
+        return SizeFor(_mType);
+    }
+
+    static size_t SizeFor(type_t type) {
+        switch (type) {
+            case INT32:
+            case UINT32:
+            case CNTR32: return sizeof(_mValue.i32);
+            case INT64:
+            case UINT64:
+            case CNTR64: return sizeof(_mValue.i64);
+            case FLOAT: return sizeof(_mValue.fp);
+            default: return 0;
+        }
+    }
+
 private:
     type_t _mType;
     Primitive _mValue;
@@ -833,15 +873,15 @@ template<> inline const c2_cntr64_t &C2Value::Primitive::ref<c2_cntr64_t>() cons
 template<> inline const float &C2Value::Primitive::ref<float>() const { return fp; }
 
 // provide types for enums and uint8_t, char even though we don't provide reading as them
-template<> constexpr C2Value::type_t C2Value::typeFor<char, false>() { return INT32; }
-template<> constexpr C2Value::type_t C2Value::typeFor<int32_t, false>() { return INT32; }
-template<> constexpr C2Value::type_t C2Value::typeFor<int64_t, false>() { return INT64; }
-template<> constexpr C2Value::type_t C2Value::typeFor<uint8_t, false>() { return UINT32; }
-template<> constexpr C2Value::type_t C2Value::typeFor<uint32_t, false>() { return UINT32; }
-template<> constexpr C2Value::type_t C2Value::typeFor<uint64_t, false>() { return UINT64; }
-template<> constexpr C2Value::type_t C2Value::typeFor<c2_cntr32_t, false>() { return CNTR32; }
-template<> constexpr C2Value::type_t C2Value::typeFor<c2_cntr64_t, false>() { return CNTR64; }
-template<> constexpr C2Value::type_t C2Value::typeFor<float, false>() { return FLOAT; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<char, false>() { return INT32; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<int32_t, false>() { return INT32; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<int64_t, false>() { return INT64; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<uint8_t, false>() { return UINT32; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<uint32_t, false>() { return UINT32; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<uint64_t, false>() { return UINT64; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<c2_cntr32_t, false>() { return CNTR32; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<c2_cntr64_t, false>() { return CNTR64; }
+template<> constexpr C2Value::type_t C2Value::TypeFor<float, false>() { return FLOAT; }
 
 // forward declare easy enum template
 template<typename E> struct C2EasyEnum;

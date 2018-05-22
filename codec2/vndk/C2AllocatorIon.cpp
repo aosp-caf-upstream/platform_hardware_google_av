@@ -213,6 +213,9 @@ public:
         int bufferFd = -1;
         ion_user_handle_t buffer = -1;
         int ret = ion_alloc(ionFd, size, align, heapMask, flags, &buffer);
+        ALOGV("ion_alloc(ionFd = %d, size = %zu, align = %zu, prot = %d, flags = %d) "
+              "returned (%d) ; buffer = %d",
+              ionFd, size, align, heapMask, flags, ret, buffer);
         if (ret == 0) {
             // get buffer fd for native handle constructor
             ret = ion_share(ionFd, buffer, &bufferFd);
@@ -239,13 +242,12 @@ public:
         }
 
         int prot = PROT_NONE;
-        int flags = MAP_PRIVATE;
+        int flags = MAP_SHARED;
         if (usage.expected & C2MemoryUsage::CPU_READ) {
             prot |= PROT_READ;
         }
         if (usage.expected & C2MemoryUsage::CPU_WRITE) {
             prot |= PROT_WRITE;
-            flags = MAP_SHARED;
         }
 
         size_t alignmentBytes = offset % PAGE_SIZE;
@@ -257,6 +259,9 @@ public:
         if (mMapFd == -1) {
             int ret = ion_map(mIonFd, mBuffer, mapSize, prot,
                               flags, mapOffset, (unsigned char**)&map.addr, &mMapFd);
+            ALOGV("ion_map(ionFd = %d, handle = %d, size = %zu, prot = %d, flags = %d, "
+                  "offset = %zu) returned (%d)",
+                  mIonFd, mBuffer, mapSize, prot, flags, mapOffset, ret);
             if (ret) {
                 mMapFd = -1;
                 map.addr = *addr = nullptr;
@@ -266,6 +271,9 @@ public:
             }
         } else {
             map.addr = mmap(nullptr, mapSize, prot, flags, mMapFd, mapOffset);
+            ALOGV("mmap(size = %zu, prot = %d, flags = %d, mapFd = %d, offset = %zu) "
+                  "returned (%d)",
+                  mapSize, prot, flags, mMapFd, mapOffset, errno);
             if (map.addr == MAP_FAILED) {
                 map.addr = *addr = nullptr;
                 err = c2_map_errno<EINVAL>(errno);
@@ -281,6 +289,7 @@ public:
 
     c2_status_t unmap(void *addr, size_t size, C2Fence *fence) {
         if (mMapFd < 0 || mMappings.empty()) {
+            ALOGD("tried to unmap unmapped buffer");
             return C2_NOT_FOUND;
         }
         for (auto it = mMappings.begin(); it != mMappings.end(); ++it) {
@@ -290,14 +299,17 @@ public:
             }
             int err = munmap(it->addr, it->size);
             if (err != 0) {
+                ALOGD("munmap failed");
                 return c2_map_errno<EINVAL>(errno);
             }
             if (fence) {
                 *fence = C2Fence(); // not using fences
             }
             (void)mMappings.erase(it);
+            ALOGV("successfully unmapped: %d", mBuffer);
             return C2_OK;
         }
+        ALOGD("unmap failed to find specified map");
         return C2_BAD_VALUE;
     }
 
