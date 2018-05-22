@@ -27,7 +27,10 @@
 namespace android {
 
 struct C2SoftVpx : public SimpleC2Component {
-    C2SoftVpx(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftVpx(const char* name, c2_node_id_t id,
+              const std::shared_ptr<IntfImpl>& intfImpl);
     virtual ~C2SoftVpx();
 
     // From SimpleC2Component
@@ -48,6 +51,7 @@ struct C2SoftVpx : public SimpleC2Component {
         MODE_VP9,
     } mMode;
 
+    std::shared_ptr<IntfImpl> mIntf;
     vpx_codec_ctx_t *mCodecCtx;
     bool mFrameParallelMode;  // Frame parallel is only supported by VP9 decoder.
 

@@ -36,7 +36,10 @@ struct OpusHeader {
 };
 
 struct C2SoftOpus : public SimpleC2Component {
-    C2SoftOpus(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftOpus(const char *name, c2_node_id_t id,
+               const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftOpus();
 
     // From SimpleC2Component
@@ -56,6 +59,7 @@ private:
         kMaxNumSamplesPerBuffer = 960 * 6
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
     OpusMSDecoder *mDecoder;
     OpusHeader mHeader;
 

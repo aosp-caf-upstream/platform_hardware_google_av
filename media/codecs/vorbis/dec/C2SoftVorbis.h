@@ -27,7 +27,10 @@ struct vorbis_info;
 namespace android {
 
 struct C2SoftVorbis : public SimpleC2Component {
-    C2SoftVorbis(const char *name, c2_node_id_t id);
+    class IntfImpl;
+
+    C2SoftVorbis(const char *name, c2_node_id_t id,
+                 const std::shared_ptr<IntfImpl> &intfImpl);
     virtual ~C2SoftVorbis();
 
     // From SimpleC2Component
@@ -48,12 +51,11 @@ struct C2SoftVorbis : public SimpleC2Component {
         kMaxNumSamplesPerChannel = 8192,
     };
 
+    std::shared_ptr<IntfImpl> mIntf;
     vorbis_dsp_state *mState;
     vorbis_info *mVi;
 
     int32_t mNumFramesLeftOnPage;
-    int32_t mNumChannels;
-    int32_t mSamplingRate;
     size_t mInputBufferCount;
     bool mSignalledError;
     bool mSignalledOutputEos;

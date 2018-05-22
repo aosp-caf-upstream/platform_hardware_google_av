@@ -880,6 +880,26 @@ c2_status_t Codec2Client::Component::flush(
         ALOGE("flush -- transaction failed.");
         return C2_TRANSACTION_FAILED;
     }
+
+    // Indices of flushed work items.
+    std::vector<uint64_t> flushedIndices;
+    for (const std::unique_ptr<C2Work> &work : *flushedWork) {
+        if (work) {
+            flushedIndices.emplace_back(work->input.ordinal.frameIndex.peeku());
+        }
+    }
+    for (uint64_t flushedIndex : flushedIndices) {
+        std::lock_guard<std::mutex> lock(mInputBuffersMutex);
+        auto it = mInputBuffers.find(flushedIndex);
+        if (it == mInputBuffers.end()) {
+            ALOGI("unknown input index %llu in flush", (long long)flushedIndex);
+        } else {
+            ALOGV("flushed input index %llu with %zu buffers",
+                    (long long)flushedIndex, it->second.size());
+            mInputBuffers.erase(it);
+        }
+    }
+
     return status;
 }
 
@@ -926,6 +946,9 @@ c2_status_t Codec2Client::Component::stop() {
         ALOGE("stop -- call failed. "
                 "Error code = %d", static_cast<int>(status));
     }
+    mInputBuffersMutex.lock();
+    mInputBuffers.clear();
+    mInputBuffersMutex.unlock();
     return status;
 }
 
@@ -941,6 +964,9 @@ c2_status_t Codec2Client::Component::reset() {
         ALOGE("reset -- call failed. "
                 "Error code = %d", static_cast<int>(status));
     }
+    mInputBuffersMutex.lock();
+    mInputBuffers.clear();
+    mInputBuffersMutex.unlock();
     return status;
 }
 
@@ -956,6 +982,9 @@ c2_status_t Codec2Client::Component::release() {
         ALOGE("release -- call failed. "
                 "Error code = %d", static_cast<int>(status));
     }
+    mInputBuffersMutex.lock();
+    mInputBuffers.clear();
+    mInputBuffersMutex.unlock();
     return status;
 }
 

@@ -114,8 +114,8 @@ C2SoftAmrWbEnc::~C2SoftAmrWbEnc() {
 }
 
 c2_status_t C2SoftAmrWbEnc::onInit() {
-    status_t err = initEncoder();
     mMode = VOAMRWB_MD2305;
+    status_t err = initEncoder();
     mIsFirst = true;
     mSignalledError = false;
     mSignalledOutputEos = false;

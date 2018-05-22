@@ -18,6 +18,9 @@
 #define C_CODEC_H_
 
 #include <chrono>
+#include <list>
+#include <memory>
+#include <set>
 
 #include <C2Component.h>
 #include <codec2/hidl/client.h>
@@ -33,7 +36,7 @@
 #include <hardware/gralloc.h>
 #include <nativebase/nativebase.h>
 
-#include "ReflectedParamUpdater.h"
+#include "CCodecConfig.h"
 
 namespace android {
 
@@ -90,12 +93,6 @@ private:
     status_t setupInputSurface(const std::shared_ptr<InputSurfaceWrapper> &surface);
     void setParameters(const sp<AMessage> &params);
 
-    // initializes the standard MediaCodec to Codec 2.0 params mapping
-    void initializeStandardParams();
-
-    // filters out vendor and standard parameters and returns them in a separate message
-    sp<AMessage> filterParameters(const sp<AMessage> &params) const;
-
     void setDeadline(const TimePoint &deadline, const char *name);
 
     enum {
@@ -136,12 +133,9 @@ private:
         int mState;
     };
 
-    struct Formats {
-        sp<AMessage> inputFormat;
-        sp<AMessage> outputFormat;
-    };
-
     struct NamedTimePoint {
+        NamedTimePoint() : mTimePoint(TimePoint::max()), mName("") {}
+
         inline void set(
                 const TimePoint &timePoint,
                 const char *name) {
@@ -164,11 +158,11 @@ private:
     struct ClientListener;
 
     Mutexed<NamedTimePoint> mDeadline;
-    Mutexed<Formats> mFormats;
+    typedef CCodecConfig Config;
+    Mutexed<Config> mConfig;
     Mutexed<std::list<std::unique_ptr<C2Work>>> mWorkDoneQueue;
-    Mutexed<ReflectedParamUpdater> mParamUpdater;
-    // standard MediaCodec to Codec 2.0 params mapping
-    std::map<std::string, std::string> mStandardParams;
+
+    friend class CCodecCallbackImpl;
 
     DISALLOW_EVIL_CONSTRUCTORS(CCodec);
 };

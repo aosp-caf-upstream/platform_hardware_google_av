@@ -817,6 +817,7 @@ void C2SoftAvcDec::process(
                 std::vector<std::unique_ptr<C2SettingResult>> failures;
                 (void)mIntf->config({&size}, C2_MAY_BLOCK, &failures);
                 work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(size));
+                continue;
             }
         }
         (void) getVuiParams();
