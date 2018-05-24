@@ -397,9 +397,16 @@ public:
             // this must fall either within sizeof(T) + FLEX_SIZE or param->size()
             // size_t size = sizeof(field);
             // mParam may be null
-            size_t baseOffs = GetBaseOffset(
-                    _mReflector, T::CORE_INDEX, offs - sizeof(C2Param)) + sizeof(C2Param);
             size_t baseSize = sizeof(typename std::remove_extent<S>::type);
+            size_t baseOffs = GetBaseOffset(
+                    _mReflector, T::CORE_INDEX, offs - sizeof(C2Param));
+            if (~baseOffs == 0) {
+                // C2_LOG(FATAL) << "unknown field at offset " << offs << " size " << sizeof(S)
+                //       << " base-size " << baseSize;
+                // __builtin_trap();
+            } else {
+                baseOffs += sizeof(C2Param);
+            }
 
             std::shared_ptr<FieldHelper> helper = _mHelper->findField(baseOffs, baseSize);
             return FieldType<S>(helper, _mTypedParam->index());

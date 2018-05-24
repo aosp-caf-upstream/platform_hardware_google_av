@@ -167,14 +167,13 @@ static void fillEmptyWork(const std::unique_ptr<C2Work> &work) {
     work->worklets.front()->output.flags = work->input.flags;
     work->worklets.front()->output.buffers.clear();
     work->worklets.front()->output.ordinal = work->input.ordinal;
-    work->workletsProcessed = 1u;
 }
 
 void C2SoftFlacEnc::process(
         const std::unique_ptr<C2Work> &work,
         const std::shared_ptr<C2BlockPool> &pool) {
     work->result = C2_OK;
-    work->workletsProcessed = 0u;
+    work->workletsProcessed = 1u;
     if (mSignalledError || mSignalledOutputEos) {
         work->result = C2_BAD_VALUE;
         return;

@@ -19,7 +19,7 @@
 #include <utils/Log.h>
 
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
 
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/MediaDefs.h>
@@ -36,22 +36,75 @@ extern "C" {
 
 namespace android {
 
-constexpr char kComponentName[] = "c2.android.vorbis.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.vorbis.decoder";
 
-static std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatCompressed)
-            .outputFormat(C2FormatAudio)
-            .inputMediaType(MEDIA_MIMETYPE_AUDIO_VORBIS)
-            .outputMediaType(MEDIA_MIMETYPE_AUDIO_RAW)
-            .build();
-}
+class C2SoftVorbis::IntfImpl : public C2InterfaceHelper {
+public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
 
-C2SoftVorbis::C2SoftVorbis(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+        setDerivedInstance(this);
+
+        addParameter(
+                DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::input(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::output(0u, C2FormatAudio))
+                .build());
+
+        addParameter(
+                DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
+                        MEDIA_MIMETYPE_AUDIO_VORBIS))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                        MEDIA_MIMETYPE_AUDIO_RAW))
+                .build());
+
+        addParameter(
+                DefineParam(mSampleRate, C2_NAME_STREAM_SAMPLE_RATE_SETTING)
+                .withDefault(new C2StreamSampleRateInfo::output(0u, 48000))
+                .withFields({C2F(mSampleRate, value).inRange(8000, 96000)})
+                .withSetter((Setter<decltype(*mSampleRate)>::StrictValueWithNoDeps))
+                .build());
+
+        addParameter(
+                DefineParam(mChannelCount, C2_NAME_STREAM_CHANNEL_COUNT_SETTING)
+                .withDefault(new C2StreamChannelCountInfo::output(0u, 1))
+                .withFields({C2F(mChannelCount, value).inRange(1, 8)})
+                .withSetter(Setter<decltype(*mChannelCount)>::StrictValueWithNoDeps)
+                .build());
+
+        addParameter(
+                DefineParam(mBitrate, C2_NAME_STREAM_BITRATE_SETTING)
+                .withDefault(new C2BitrateTuning::input(0u, 64000))
+                .withFields({C2F(mBitrate, value).inRange(32000, 500000)})
+                .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
+                .build());
+    }
+
+private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2StreamSampleRateInfo::output> mSampleRate;
+    std::shared_ptr<C2StreamChannelCountInfo::output> mChannelCount;
+    std::shared_ptr<C2BitrateTuning::input> mBitrate;
+};
+
+C2SoftVorbis::C2SoftVorbis(
+        const char *name,
+        c2_node_id_t id,
+        const std::shared_ptr<IntfImpl> &intfImpl)
+    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mState(nullptr),
       mVi(nullptr) {
 }
@@ -78,8 +131,6 @@ c2_status_t C2SoftVorbis::onStop() {
         mVi = nullptr;
     }
     mNumFramesLeftOnPage = -1;
-    mNumChannels = 1;
-    mSamplingRate = 48000;
     mInputBufferCount = 0;
     mSignalledOutputEos = false;
     mSignalledError = false;
@@ -115,8 +166,6 @@ status_t C2SoftVorbis::initDecoder() {
     vorbis_dsp_clear(mState);
 
     mNumFramesLeftOnPage = -1;
-    mNumChannels = 1;
-    mSamplingRate = 48000;
     mInputBufferCount = 0;
     mSignalledError = false;
     mSignalledOutputEos = false;
@@ -180,6 +229,7 @@ void C2SoftVorbis::process(
         const std::shared_ptr<C2BlockPool> &pool) {
     work->result = C2_OK;
     work->workletsProcessed = 0u;
+    work->worklets.front()->output.configUpdate.clear();
     if (mSignalledError || mSignalledOutputEos) {
         work->result = C2_BAD_VALUE;
         return;
@@ -208,6 +258,8 @@ void C2SoftVorbis::process(
     ALOGV("in buffer attr. size %zu timestamp %d frameindex %d", inSize,
           (int)work->input.ordinal.timestamp.peeku(), (int)work->input.ordinal.frameIndex.peeku());
     const uint8_t *data = rView.data() + inOffset;
+    int32_t numChannels  = mVi->channels;
+    int32_t samplingRate = mVi->rate;
     if (mInputBufferCount < 2) {
         if (inSize < 7 || memcmp(&data[1], "vorbis", 6)) {
             ALOGE("unexpected first 7 bytes in CSD");
@@ -236,11 +288,28 @@ void C2SoftVorbis::process(
                 work->result = C2_CORRUPTED;
                 return;
             }
-            if (mVi->rate != mSamplingRate ||
-                    mVi->channels != mNumChannels) {
+            if (mVi->rate != samplingRate ||
+                    mVi->channels != numChannels) {
                 ALOGV("vorbis: rate/channels changed: %ld/%d", mVi->rate, mVi->channels);
-                mSamplingRate = mVi->rate;
-                mNumChannels = mVi->channels;
+                samplingRate = mVi->rate;
+                numChannels = mVi->channels;
+
+                C2StreamSampleRateInfo::output sampleRateInfo(0u, samplingRate);
+                C2StreamChannelCountInfo::output channelCountInfo(0u, numChannels);
+                std::vector<std::unique_ptr<C2SettingResult>> failures;
+                c2_status_t err = mIntf->config(
+                        { &sampleRateInfo, &channelCountInfo },
+                        C2_MAY_BLOCK,
+                        &failures);
+                if (err == OK) {
+                    work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(sampleRateInfo));
+                    work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(channelCountInfo));
+                } else {
+                    ALOGE("Config Update failed");
+                    mSignalledError = true;
+                    work->result = C2_CORRUPTED;
+                    return;
+                }
             }
         } else {
             if (data[0] != 5) {
@@ -365,11 +434,19 @@ void C2SoftVorbis::process(
 
 class C2SoftVorbisDecFactory : public C2ComponentFactory {
 public:
+    C2SoftVorbisDecFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+            GetCodec2PlatformComponentStore()->getParamReflector())) {
+    }
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftVorbis(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+                new C2SoftVorbis(COMPONENT_NAME,
+                              id,
+                              std::make_shared<C2SoftVorbis::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
@@ -377,11 +454,17 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+                new SimpleInterface<C2SoftVorbis::IntfImpl>(
+                        COMPONENT_NAME, id, std::make_shared<C2SoftVorbis::IntfImpl>(mHelper)),
+                deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftVorbisDecFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

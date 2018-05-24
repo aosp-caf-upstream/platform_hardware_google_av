@@ -21,7 +21,7 @@
 #include "C2SoftVpx.h"
 
 #include <C2PlatformSupport.h>
-#include <SimpleC2Interface.h>
+#include <SimpleInterfaceCommon.h>
 
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/AUtils.h>
@@ -30,31 +30,77 @@
 namespace android {
 
 #ifdef VP9
-constexpr char kComponentName[] = "c2.android.vp9.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.vp9.decoder";
 #else
-constexpr char kComponentName[] = "c2.android.vp8.decoder";
+constexpr char COMPONENT_NAME[] = "c2.android.vp8.decoder";
 #endif
 
-static std::shared_ptr<C2ComponentInterface> BuildIntf(
-        const char *name, c2_node_id_t id,
-        std::function<void(C2ComponentInterface*)> deleter =
-            std::default_delete<C2ComponentInterface>()) {
-    return SimpleC2Interface::Builder(name, id, deleter)
-            .inputFormat(C2FormatCompressed)
-            .outputFormat(C2FormatVideo)
-            .inputMediaType(
+
+class C2SoftVpx::IntfImpl : public C2InterfaceHelper {
+public:
+    explicit IntfImpl(const std::shared_ptr<C2ReflectorHelper> &helper)
+        : C2InterfaceHelper(helper) {
+
+        setDerivedInstance(this);
+
+        addParameter(
+                DefineParam(mInputFormat, C2_NAME_INPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::input(0u, C2FormatCompressed))
+                .build());
+
+        addParameter(
+                DefineParam(mOutputFormat, C2_NAME_OUTPUT_STREAM_FORMAT_SETTING)
+                .withConstValue(new C2StreamFormatConfig::output(0u, C2FormatVideo))
+                .build());
+
+        addParameter(
+                DefineParam(mInputMediaType, C2_NAME_INPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::input>(
 #ifdef VP9
-                    MEDIA_MIMETYPE_VIDEO_VP9
+                        MEDIA_MIMETYPE_VIDEO_VP9
 #else
-                    MEDIA_MIMETYPE_VIDEO_VP8
+                        MEDIA_MIMETYPE_VIDEO_VP8
 #endif
-            )
-            .outputMediaType(MEDIA_MIMETYPE_VIDEO_RAW)
-            .build();
-}
+                )).build());
 
-C2SoftVpx::C2SoftVpx(const char *name, c2_node_id_t id)
-    : SimpleC2Component(BuildIntf(name, id)),
+        addParameter(
+                DefineParam(mOutputMediaType, C2_NAME_OUTPUT_PORT_MIME_SETTING)
+                .withConstValue(AllocSharedString<C2PortMimeConfig::output>(
+                        MEDIA_MIMETYPE_VIDEO_RAW))
+                .build());
+
+        addParameter(
+                DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_INFO)
+                .withDefault(new C2VideoSizeStreamInfo::output(0u, 320, 240))
+                .withFields({
+                    C2F(mSize, width).inRange(2, 2048, 2),
+                    C2F(mSize, height).inRange(2, 2048, 2),
+                })
+                .withSetter(SizeSetter)
+                .build());
+    }
+
+    static C2R SizeSetter(bool mayBlock, C2P<C2VideoSizeStreamInfo::output> &me) {
+        (void)mayBlock;
+        // TODO: maybe apply block limit?
+        return me.F(me.v.width).validatePossible(me.v.width).plus(
+                me.F(me.v.height).validatePossible(me.v.height));
+    }
+
+private:
+    std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
+    std::shared_ptr<C2StreamFormatConfig::output> mOutputFormat;
+    std::shared_ptr<C2PortMimeConfig::input> mInputMediaType;
+    std::shared_ptr<C2PortMimeConfig::output> mOutputMediaType;
+    std::shared_ptr<C2VideoSizeStreamInfo::output> mSize;
+};
+
+C2SoftVpx::C2SoftVpx(
+        const char *name,
+        c2_node_id_t id,
+        const std::shared_ptr<IntfImpl> &intfImpl)
+    : SimpleC2Component(std::make_shared<SimpleInterface<IntfImpl>>(name, id, intfImpl)),
+      mIntf(intfImpl),
       mCodecCtx(nullptr) {
 }
 
@@ -209,6 +255,7 @@ void C2SoftVpx::process(
         const std::shared_ptr<C2BlockPool> &pool) {
     work->result = C2_OK;
     work->workletsProcessed = 0u;
+    work->worklets.front()->output.configUpdate.clear();
     if (mSignalledError || mSignalledOutputEos) {
         work->result = C2_BAD_VALUE;
         return;
@@ -310,9 +357,24 @@ bool C2SoftVpx::outputBuffer(
 
     if (!img) return false;
 
-    mWidth = img->d_w;
-    mHeight = img->d_h;
+    if (img->d_w != mWidth || img->d_h != mHeight) {
+        mWidth = img->d_w;
+        mHeight = img->d_h;
 
+        C2VideoSizeStreamInfo::output size(0u, mWidth, mHeight);
+        std::vector<std::unique_ptr<C2SettingResult>> failures;
+        c2_status_t err = mIntf->config({&size}, C2_MAY_BLOCK, &failures);
+        if (err == C2_OK) {
+            work->worklets.front()->output.configUpdate.push_back(
+                C2Param::Copy(size));
+        } else {
+            ALOGE("Config update size failed");
+            mSignalledError = true;
+            work->result = C2_CORRUPTED;
+            return false;
+        }
+
+    }
     CHECK(img->fmt == VPX_IMG_FMT_I420 || img->fmt == VPX_IMG_FMT_I42016);
     int32_t bpp = 1;
     if (img->fmt == VPX_IMG_FMT_I42016) {
@@ -384,11 +446,18 @@ c2_status_t C2SoftVpx::drain(
 
 class C2SoftVpxFactory : public C2ComponentFactory {
 public:
+    C2SoftVpxFactory() : mHelper(std::static_pointer_cast<C2ReflectorHelper>(
+        GetCodec2PlatformComponentStore()->getParamReflector())) {
+    }
+
     virtual c2_status_t createComponent(
             c2_node_id_t id,
             std::shared_ptr<C2Component>* const component,
             std::function<void(C2Component*)> deleter) override {
-        *component = std::shared_ptr<C2Component>(new C2SoftVpx(kComponentName, id), deleter);
+        *component = std::shared_ptr<C2Component>(
+            new C2SoftVpx(COMPONENT_NAME, id,
+                          std::make_shared<C2SoftVpx::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
@@ -396,11 +465,18 @@ public:
             c2_node_id_t id,
             std::shared_ptr<C2ComponentInterface>* const interface,
             std::function<void(C2ComponentInterface*)> deleter) override {
-        *interface = BuildIntf(kComponentName, id, deleter);
+        *interface = std::shared_ptr<C2ComponentInterface>(
+            new SimpleInterface<C2SoftVpx::IntfImpl>(
+                COMPONENT_NAME, id,
+                std::make_shared<C2SoftVpx::IntfImpl>(mHelper)),
+            deleter);
         return C2_OK;
     }
 
     virtual ~C2SoftVpxFactory() override = default;
+
+private:
+    std::shared_ptr<C2ReflectorHelper> mHelper;
 };
 
 }  // namespace android

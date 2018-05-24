@@ -99,7 +99,7 @@ public:
 
 protected:
     enum : uint32_t {
-        FLEX_SIZE = 0, // TODO: is this still needed? this may be confusing.
+        FLEX_SIZE = 0,
     };
 };
 
@@ -123,6 +123,11 @@ struct C2_HIDE _C2Flexible
 /// Shorthand for std::enable_if
 #define ENABLE_IF(cond) typename std::enable_if<cond>::type
 
+template<typename T, typename V=void>
+struct C2_HIDE _c2_enable_if_type {
+    typedef V type;
+};
+
 /// Helper template that exposes the flexible subtype of a struct.
 template<typename S, typename E=void>
 struct C2_HIDE _C2FlexHelper {
@@ -130,12 +135,12 @@ struct C2_HIDE _C2FlexHelper {
     enum : uint32_t { FLEX_SIZE = 0 };
 };
 
-/// Specialization for flexible types.
+/// Specialization for flexible types. This only works if _FlexMemberType is public.
 template<typename S>
 struct C2_HIDE _C2FlexHelper<S,
-        typename std::enable_if<!std::is_void<typename S::flexMemberType>::value>::type> {
-    typedef typename _C2FlexHelper<typename S::flexMemberType>::FlexType FlexType;
-    enum : uint32_t { FLEX_SIZE = _C2FlexHelper<typename S::flexMemberType>::FLEX_SIZE };
+        typename _c2_enable_if_type<typename S::_FlexMemberType>::type> {
+    typedef typename _C2FlexHelper<typename S::_FlexMemberType>::FlexType FlexType;
+    enum : uint32_t { FLEX_SIZE = _C2FlexHelper<typename S::_FlexMemberType>::FLEX_SIZE };
 };
 
 /// Specialization for flex arrays.
@@ -271,18 +276,18 @@ protected:
     C2_DO_NOT_COPY(cls) \
 private: \
     C2PARAM_MAKE_FRIENDS \
-    /* default constructor with flexCount */ \
-    inline cls(size_t) : cls() {} \
     /** \if 0 */ \
     template<typename, typename> friend struct _C2FlexHelper; \
-    typedef decltype(m) flexMemberType; \
 public: \
-    /* constexpr static flexMemberType cls::* flexMember = &cls::m; */ \
-    typedef typename _C2FlexHelper<flexMemberType>::FlexType FlexType; \
+    typedef decltype(m) _FlexMemberType; \
+    /* default constructor with flexCount */ \
+    inline cls(size_t) : cls() {} \
+    /* constexpr static _FlexMemberType cls::* flexMember = &cls::m; */ \
+    typedef typename _C2FlexHelper<_FlexMemberType>::FlexType FlexType; \
     static_assert(\
             !std::is_void<FlexType>::value, \
             "member is not flexible, or a flexible array of a flexible type"); \
-    enum : uint32_t { FLEX_SIZE = _C2FlexHelper<flexMemberType>::FLEX_SIZE }; \
+    enum : uint32_t { FLEX_SIZE = _C2FlexHelper<_FlexMemberType>::FLEX_SIZE }; \
     /** \endif */ \
 
 /// @}
