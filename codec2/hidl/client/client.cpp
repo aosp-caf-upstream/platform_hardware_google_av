@@ -131,8 +131,7 @@ c2_status_t Codec2ConfigurableClient::query(
     }
     indices.resize(numIndices);
     if (heapParams) {
-        heapParams->reserve(numIndices);
-        heapParams->clear();
+        heapParams->reserve(heapParams->size() + numIndices);
     }
     c2_status_t status;
     Return<void> transStatus = base()->query(
@@ -227,9 +226,8 @@ c2_status_t Codec2ConfigurableClient::config(
                             "Error code = %d", static_cast<int>(status));
                     return;
                 }
-                failures->clear();
-                failures->resize(f.size());
-                size_t i = 0;
+                size_t i = failures->size();
+                failures->resize(i + f.size());
                 for (const SettingResult& sf : f) {
                     status = objcpy(&(*failures)[i++], sf);
                     if (status != C2_OK) {
@@ -263,8 +261,8 @@ c2_status_t Codec2ConfigurableClient::querySupportedParams(
                             "Error code = %d", static_cast<int>(status));
                     return;
                 }
-                params->resize(p.size());
-                size_t i = 0;
+                size_t i = params->size();
+                params->resize(i + p.size());
                 for (const ParamDescriptor& sp : p) {
                     status = objcpy(&(*params)[i++], sp);
                     if (status != C2_OK) {

@@ -37,6 +37,7 @@
 #include <media/stagefright/foundation/AUtils.h>
 #include <media/stagefright/foundation/hexdump.h>
 #include <media/stagefright/MediaCodec.h>
+#include <media/stagefright/MediaCodecConstants.h>
 #include <media/MediaCodecBuffer.h>
 #include <system/window.h>
 
@@ -605,7 +606,7 @@ public:
 
     bool requestNewBuffer(size_t *index, sp<MediaCodecBuffer> *buffer) override {
         int32_t capacity = kLinearBufferSize;
-        (void)mFormat->findInt32(C2_NAME_STREAM_MAX_BUFFER_SIZE_SETTING, &capacity);
+        (void)mFormat->findInt32(KEY_MAX_INPUT_SIZE, &capacity);
         // TODO: proper max input size
         // TODO: read usage from intf
         sp<Codec2Buffer> newBuffer = alloc((size_t)capacity);
@@ -1958,7 +1959,7 @@ bool CCodecBufferChannel::handleWork(
         Mutexed<std::unique_ptr<OutputBuffers>>::Locked buffers(mOutputBuffers);
         if ((*buffers)->registerCsd(initData, &index, &outBuffer)) {
             outBuffer->meta()->setInt64("timeUs", worklet->output.ordinal.timestamp.peek());
-            outBuffer->meta()->setInt32("flags", flags | MediaCodec::BUFFER_FLAG_CODECCONFIG);
+            outBuffer->meta()->setInt32("flags", MediaCodec::BUFFER_FLAG_CODECCONFIG);
             ALOGV("onWorkDone: csd index = %zu", index);
 
             buffers.unlock();

@@ -897,7 +897,18 @@ status_t CCodecConfig::getConfigUpdateFromSdkParams(
     }
 
     configUpdate->clear();
-    c2_status_t err = component->query({}, indices, blocking, configUpdate);
+    std::vector<C2Param::Index> supportedIndices;
+    for (C2Param::Index ix : indices) {
+        if (mSupportedIndices.count(ix)) {
+            supportedIndices.push_back(ix);
+        } else if (mLocalParams.count(ix)) {
+            // query local parameter here
+            auto it = mCurrentConfig.find(ix);
+            configUpdate->emplace_back(C2Param::Copy(*it->second));
+        }
+    }
+
+    c2_status_t err = component->query({ }, supportedIndices, blocking, configUpdate);
     if (err != C2_OK) {
         ALOGD("query failed after returning %zu params => %s", configUpdate->size(), asString(err));
     }
@@ -933,6 +944,9 @@ status_t CCodecConfig::setParameters(
                 err = validator(copy);
             }
             if (err == C2_OK) {
+                ALOGV("updated local parameter value for %s",
+                        mParamUpdater->getParamName(param->index()).c_str());
+
                 mCurrentConfig[param->index()] = std::move(copy);
             } else {
                 ALOGD("failed to set parameter value for %s => %s",

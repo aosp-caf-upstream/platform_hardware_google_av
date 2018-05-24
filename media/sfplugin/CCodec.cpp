@@ -595,9 +595,12 @@ void CCodec::configure(const sp<AMessage> &msg) {
 
         // TODO: do this based on component requiring linear allocator for input
         if ((config->mDomain & Config::IS_DECODER) || (config->mDomain & Config::IS_AUDIO)) {
-            // Pass max input size on input format to the buffer channel
-            config->mInputFormat->setInt32(
-                    KEY_MAX_INPUT_SIZE, (int32_t)(c2_min(maxInputSize.value, uint32_t(INT32_MAX))));
+            // Pass max input size on input format to the buffer channel (if supplied by the
+            // component or by a default)
+            if (maxInputSize.value) {
+                config->mInputFormat->setInt32(
+                        KEY_MAX_INPUT_SIZE, (int32_t)(c2_min(maxInputSize.value, uint32_t(INT32_MAX))));
+            }
         }
 
         ALOGD("setup formats input: %s and output: %s",
