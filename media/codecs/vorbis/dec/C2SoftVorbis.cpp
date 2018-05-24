@@ -135,7 +135,7 @@ c2_status_t C2SoftVorbis::onStop() {
     mSignalledOutputEos = false;
     mSignalledError = false;
 
-    return C2_OK;
+    return (initDecoder() == OK ? C2_OK : C2_CORRUPTED);
 }
 
 void C2SoftVorbis::onReset() {

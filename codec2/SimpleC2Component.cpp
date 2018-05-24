@@ -18,6 +18,8 @@
 #define LOG_TAG "SimpleC2Component"
 #include <media/stagefright/foundation/ADebug.h>
 
+#include <cutils/properties.h>
+
 #include <inttypes.h>
 
 #include <C2Config.h>
@@ -344,6 +346,8 @@ void SimpleC2Component::processQueue() {
         }
     }
 
+    // TODO: use output block pool from CCodec, but that will need this class to get the
+    // blockpools config.
     if (!mOutputBlockPool) {
         c2_status_t err = [this] {
             // TODO: don't use query_vb
@@ -356,19 +360,35 @@ void SimpleC2Component::processQueue() {
             if (err != C2_OK) {
                 return err;
             }
-            if (outputFormat.value == C2FormatVideo) {
+            int32_t poolMask = property_get_int32("debug.stagefright.c2-poolmask", 0);
+
+            C2Allocator::id_t allocatorId =
+                (outputFormat.value == C2FormatVideo) ? C2PlatformAllocatorStore::BUFFERQUEUE
+                        : C2PlatformAllocatorStore::ION;
+            C2BlockPool::local_id_t poolId =
+                (outputFormat.value == C2FormatVideo) ? C2BlockPool::BASIC_GRAPHIC
+                        : C2BlockPool::BASIC_LINEAR;
+
+            if ((poolMask >> allocatorId) & 1) {
                 err = CreateCodec2BlockPool(
-                        C2PlatformAllocatorStore::BUFFERQUEUE,
-                        shared_from_this(), &mOutputBlockPool);
+                        allocatorId, shared_from_this(), &mOutputBlockPool);
+                ALOGD("Created output block pool with allocatorID %u => poolID %llu - %d",
+                        allocatorId,
+                        (unsigned long long)(
+                                mOutputBlockPool ? mOutputBlockPool->getLocalId() : 111000111),
+                        err);
             } else {
-                err = CreateCodec2BlockPool(
-                        C2PlatformAllocatorStore::ION,
-                        shared_from_this(), &mOutputBlockPool);
+                err = C2_NOT_FOUND;
             }
             if (err != C2_OK) {
-                return err;
+                err = GetCodec2BlockPool(poolId, shared_from_this(), &mOutputBlockPool);
+                ALOGD("Using basic output block pool with poolID %llu => got %llu - %d",
+                        (unsigned long long)poolId,
+                        (unsigned long long)(
+                                mOutputBlockPool ? mOutputBlockPool->getLocalId() : 111000111),
+                        err);
             }
-            return C2_OK;
+            return err;
         }();
         if (err != C2_OK) {
             Mutexed<ExecState>::Locked state(mExecState);

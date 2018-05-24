@@ -1155,17 +1155,25 @@ public:
 
     c2_status_t setInfo(const std::shared_ptr<C2Info> &info) {
         // To "update" you need to erase the existing one if any, and then insert.
-        (void) mInfos.erase(info->type());
-        (void) mInfos.insert({ info->type(), info });
+        (void) mInfos.erase(info->coreIndex());
+        (void) mInfos.insert({ info->coreIndex(), info });
         return C2_OK;
     }
 
     bool hasInfo(C2Param::Type index) const {
-        return mInfos.count(index.type()) > 0;
+        return mInfos.count(index.coreIndex()) > 0;
+    }
+
+    std::shared_ptr<const C2Info> getInfo(C2Param::Type index) const {
+        auto it = mInfos.find(index.coreIndex());
+        if (it == mInfos.end()) {
+            return nullptr;
+        }
+        return std::const_pointer_cast<const C2Info>(it->second);
     }
 
     std::shared_ptr<C2Info> removeInfo(C2Param::Type index) {
-        auto it = mInfos.find(index.type());
+        auto it = mInfos.find(index.coreIndex());
         if (it == mInfos.end()) {
             return nullptr;
         }
@@ -1177,7 +1185,7 @@ public:
 private:
     C2Buffer * const mThis;
     BufferDataBuddy mData;
-    std::map<C2Param::Type, std::shared_ptr<C2Info>> mInfos;
+    std::map<C2Param::CoreIndex, std::shared_ptr<C2Info>> mInfos;
     std::list<std::pair<OnDestroyNotify, void *>> mNotify;
 };
 
@@ -1207,6 +1215,10 @@ c2_status_t C2Buffer::setInfo(const std::shared_ptr<C2Info> &info) {
 
 bool C2Buffer::hasInfo(C2Param::Type index) const {
     return mImpl->hasInfo(index);
+}
+
+std::shared_ptr<const C2Info> C2Buffer::getInfo(C2Param::Type index) const {
+    return mImpl->getInfo(index);
 }
 
 std::shared_ptr<C2Info> C2Buffer::removeInfo(C2Param::Type index) {

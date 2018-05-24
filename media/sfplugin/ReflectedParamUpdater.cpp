@@ -22,6 +22,7 @@
 #include <set>
 #include <sstream>
 
+#include <C2Debug.h>
 #include <C2ParamInternal.h>
 
 #include <media/stagefright/foundation/ABuffer.h>
@@ -143,6 +144,12 @@ void ReflectedParamUpdater::addParamDesc(
         bool markVendor) {
     C2String paramName = desc->name();
 
+    // prefix vendor parameters
+    if (desc->index().isVendor() && markVendor) {
+        paramName = "vendor." + paramName;
+    }
+    mParamNames.emplace(desc->index(), paramName);
+
     for (auto it = structDesc.begin(); it != structDesc.end(); ++it) {
         if (it->type() & C2FieldDescriptor::STRUCT_FLAG) {
             // TODO: don't ignore
@@ -150,11 +157,6 @@ void ReflectedParamUpdater::addParamDesc(
             continue;
         }
         C2String fieldName = paramName + "." + it->name();
-
-        // prefix vendor parameters and suffix standard parameters with type
-        if (desc->index().isVendor() && markVendor) {
-            fieldName = "vendor." + fieldName;
-        }
 
         // verify extent and type
         switch (it->type()) {
@@ -190,6 +192,17 @@ void ReflectedParamUpdater::addParamDesc(
             0,  // offset
         });
     }
+}
+
+std::string ReflectedParamUpdater::getParamName(C2Param::Index index) const {
+    auto it = mParamNames.find(index);
+    if (it != mParamNames.end()) {
+        return it->second;
+    }
+
+    std::stringstream ret;
+    ret << "<unknown " << index << ">";
+    return ret.str();
 }
 
 void ReflectedParamUpdater::getParamIndicesFromMessage(

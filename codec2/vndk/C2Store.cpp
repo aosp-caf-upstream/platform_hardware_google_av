@@ -721,6 +721,22 @@ std::shared_ptr<const C2Component::Traits> C2PlatformComponentStore::ComponentMo
             traits->mediaType = mediaTypeConfig->m.value;
             // TODO: get this properly.
             traits->rank = 0x200;
+
+            // TODO: define these values properly
+            bool decoder = (traits->name.find("decoder") != std::string::npos);
+            traits->kind =
+                    decoder ? C2Component::KIND_DECODER :
+                    encoder ? C2Component::KIND_ENCODER :
+                    C2Component::KIND_OTHER;
+            if (strncmp(traits->mediaType.c_str(), "audio/", 6) == 0) {
+                traits->domain = C2Component::DOMAIN_AUDIO;
+            } else if (strncmp(traits->mediaType.c_str(), "video/", 6) == 0) {
+                traits->domain = C2Component::DOMAIN_VIDEO;
+            } else if (strncmp(traits->mediaType.c_str(), "image/", 6) == 0) {
+                traits->domain = C2Component::DOMAIN_IMAGE;
+            } else {
+                traits->domain = C2Component::DOMAIN_OTHER;
+            }
         }
 
         mTraits = traits;

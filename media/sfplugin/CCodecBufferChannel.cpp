@@ -25,12 +25,14 @@
 #include <C2PlatformSupport.h>
 #include <C2BlockInternal.h>
 #include <C2Config.h>
+#include <C2Debug.h>
 
 #include <android/hardware/cas/native/1.0/IDescrambler.h>
 #include <binder/MemoryDealer.h>
 #include <gui/Surface.h>
 #include <media/openmax/OMX_Core.h>
 #include <media/stagefright/foundation/ABuffer.h>
+#include <media/stagefright/foundation/ALookup.h>
 #include <media/stagefright/foundation/AMessage.h>
 #include <media/stagefright/foundation/AUtils.h>
 #include <media/stagefright/foundation/hexdump.h>
@@ -210,9 +212,9 @@ private:
 namespace {
 
 // TODO: get this info from component
-const static size_t kMinBufferArraySize = 16;
+const static size_t kMinInputBufferArraySize = 8;
+const static size_t kMinOutputBufferArraySize = 16;
 const static size_t kLinearBufferSize = 1048576;
-const static size_t kMaxGraphicBufferRefCount = 4;
 
 /**
  * Simple local buffer pool backed by std::vector.
@@ -512,7 +514,7 @@ public:
             ALOGV("%s: No matching buffer found", __func__);
             return false;
         }
-        ALOGV("%s: matching buffer found", __func__);
+        ALOGV("%s: matching buffer found (index=%zu)", __func__, index);
         std::shared_ptr<C2Buffer> result = clientBuffer->asC2Buffer();
         mBuffers[index].compBuffer = result;
         if (c2buffer) {
@@ -634,7 +636,7 @@ public:
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,
-                kMinBufferArraySize,
+                kMinInputBufferArraySize,
                 [this, capacity] () -> sp<Codec2Buffer> { return alloc(capacity); });
         return std::move(array);
     }
@@ -671,7 +673,7 @@ public:
         } else {
             mUsage = { C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE };
         }
-        for (size_t i = 0; i < kMinBufferArraySize; ++i) {
+        for (size_t i = 0; i < kMinInputBufferArraySize; ++i) {
             sp<IMemory> memory = mDealer->allocate(kLinearBufferSize);
             if (memory == nullptr) {
                 ALOGD("Failed to allocate memory from dealer: only %zu slots allocated", i);
@@ -758,7 +760,7 @@ public:
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,
-                kMinBufferArraySize,
+                kMinInputBufferArraySize,
                 [format = mFormat, alloc]() -> sp<Codec2Buffer> {
                     return new GraphicMetadataBuffer(format, alloc);
                 });
@@ -772,7 +774,9 @@ private:
 
 class GraphicInputBuffers : public CCodecBufferChannel::InputBuffers {
 public:
-    GraphicInputBuffers() : mLocalBufferPool(LocalBufferPool::Create(1920 * 1080 * 16)) {}
+    GraphicInputBuffers()
+        : mLocalBufferPool(LocalBufferPool::Create(1920 * 1080 * 4 * 16)) {
+    }
     ~GraphicInputBuffers() override = default;
 
     bool requestNewBuffer(size_t *index, sp<MediaCodecBuffer> *buffer) override {
@@ -805,7 +809,7 @@ public:
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,
-                kMinBufferArraySize,
+                kMinInputBufferArraySize,
                 [pool = mPool, format = mFormat, lbp = mLocalBufferPool]() -> sp<Codec2Buffer> {
                     C2MemoryUsage usage = { C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE };
                     return AllocateGraphicBuffer(
@@ -971,7 +975,7 @@ public:
         array->setFormat(mFormat);
         array->initialize(
                 mImpl,
-                kMinBufferArraySize,
+                kMinOutputBufferArraySize,
                 [this]() { return allocateArrayBuffer(); });
         return std::move(array);
     }
@@ -1290,6 +1294,11 @@ status_t CCodecBufferChannel::queueSecureInputBuffer(
 }
 
 void CCodecBufferChannel::feedInputBufferIfAvailable() {
+    QueueGuard guard(mSync);
+    if (!guard.isRunning()) {
+        ALOGV("We're not running --- no input buffer reported");
+        return;
+    }
     sp<MediaCodecBuffer> inBuffer;
     size_t index;
     {
@@ -1320,6 +1329,133 @@ status_t CCodecBufferChannel::renderOutputBuffer(
         return INVALID_OPERATION;
     }
 
+#if 0
+    const std::vector<std::shared_ptr<const C2Info>> infoParams = c2Buffer->info();
+    ALOGV("queuing gfx buffer with %zu infos", infoParams.size());
+    for (const std::shared_ptr<const C2Info> &info : infoParams) {
+        AString res;
+        for (size_t ix = 0; ix + 3 < info->size(); ix += 4) {
+            if (ix) res.append(", ");
+            res.append(*((int32_t*)info.get() + (ix / 4)));
+        }
+        ALOGV("  [%s]", res.c_str());
+    }
+#endif
+    std::shared_ptr<const C2StreamRotationInfo::output> rotation =
+        std::static_pointer_cast<const C2StreamRotationInfo::output>(
+                c2Buffer->getInfo(C2StreamRotationInfo::output::PARAM_TYPE));
+    bool flip = rotation && (rotation->flip & 1);
+    uint32_t quarters = ((rotation ? rotation->value : 0) / 90) & 3;
+    uint32_t transform = 0;
+    switch (quarters) {
+        case 0: // no rotation
+            transform = flip ? HAL_TRANSFORM_FLIP_H : 0;
+            break;
+        case 1: // 90 degrees counter-clockwise
+            transform = flip ? (HAL_TRANSFORM_FLIP_V | HAL_TRANSFORM_ROT_90)
+                    : HAL_TRANSFORM_ROT_270;
+            break;
+        case 2: // 180 degrees
+            transform = flip ? HAL_TRANSFORM_FLIP_V : HAL_TRANSFORM_ROT_180;
+            break;
+        case 3: // 90 degrees clockwise
+            transform = flip ? (HAL_TRANSFORM_FLIP_H | HAL_TRANSFORM_ROT_90)
+                    : HAL_TRANSFORM_ROT_90;
+            break;
+    }
+
+    std::shared_ptr<const C2StreamSurfaceScalingInfo::output> surfaceScaling =
+        std::static_pointer_cast<const C2StreamSurfaceScalingInfo::output>(
+                c2Buffer->getInfo(C2StreamSurfaceScalingInfo::output::PARAM_TYPE));
+    uint32_t videoScalingMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
+    if (surfaceScaling) {
+        videoScalingMode = surfaceScaling->value;
+    }
+
+    // Use dataspace if component provides it. Otherwise, compose dataspace from color aspects
+    std::shared_ptr<const C2StreamDataSpaceInfo::output> dataSpaceInfo =
+        std::static_pointer_cast<const C2StreamDataSpaceInfo::output>(
+                c2Buffer->getInfo(C2StreamDataSpaceInfo::output::PARAM_TYPE));
+    uint32_t dataSpace = HAL_DATASPACE_UNKNOWN; // this is 0
+    if (dataSpaceInfo) {
+        dataSpace = dataSpaceInfo->value;
+    } else {
+        std::shared_ptr<const C2StreamColorAspectsInfo::output> colorAspects =
+            std::static_pointer_cast<const C2StreamColorAspectsInfo::output>(
+                    c2Buffer->getInfo(C2StreamColorAspectsInfo::output::PARAM_TYPE));
+        C2Color::range_t range =
+            colorAspects == nullptr ? C2Color::RANGE_UNSPECIFIED     : colorAspects->range;
+        C2Color::primaries_t primaries =
+            colorAspects == nullptr ? C2Color::PRIMARIES_UNSPECIFIED : colorAspects->primaries;
+        C2Color::transfer_t transfer =
+            colorAspects == nullptr ? C2Color::TRANSFER_UNSPECIFIED  : colorAspects->transfer;
+        C2Color::matrix_t matrix =
+            colorAspects == nullptr ? C2Color::MATRIX_UNSPECIFIED    : colorAspects->matrix;
+
+        switch (range) {
+            case C2Color::RANGE_FULL:    dataSpace |= HAL_DATASPACE_RANGE_FULL;    break;
+            case C2Color::RANGE_LIMITED: dataSpace |= HAL_DATASPACE_RANGE_LIMITED; break;
+            default: break;
+        }
+
+        switch (transfer) {
+            case C2Color::TRANSFER_LINEAR:  dataSpace |= HAL_DATASPACE_TRANSFER_LINEAR;     break;
+            case C2Color::TRANSFER_SRGB:    dataSpace |= HAL_DATASPACE_TRANSFER_SRGB;       break;
+            case C2Color::TRANSFER_170M:    dataSpace |= HAL_DATASPACE_TRANSFER_SMPTE_170M; break;
+            case C2Color::TRANSFER_GAMMA22: dataSpace |= HAL_DATASPACE_TRANSFER_GAMMA2_2;   break;
+            case C2Color::TRANSFER_GAMMA28: dataSpace |= HAL_DATASPACE_TRANSFER_GAMMA2_8;   break;
+            case C2Color::TRANSFER_ST2084:  dataSpace |= HAL_DATASPACE_TRANSFER_ST2084;     break;
+            case C2Color::TRANSFER_HLG:     dataSpace |= HAL_DATASPACE_TRANSFER_HLG;        break;
+            default: break;
+        }
+
+        switch (primaries) {
+            case C2Color::PRIMARIES_BT601_525:
+                dataSpace |= (matrix == C2Color::MATRIX_SMPTE240M
+                                || matrix == C2Color::MATRIX_BT709)
+                        ? HAL_DATASPACE_STANDARD_BT601_525_UNADJUSTED
+                        : HAL_DATASPACE_STANDARD_BT601_525;
+                break;
+            case C2Color::PRIMARIES_BT601_625:
+                dataSpace |= (matrix == C2Color::MATRIX_SMPTE240M
+                                || matrix == C2Color::MATRIX_BT709)
+                        ? HAL_DATASPACE_STANDARD_BT601_625_UNADJUSTED
+                        : HAL_DATASPACE_STANDARD_BT601_625;
+                break;
+            case C2Color::PRIMARIES_BT2020:
+                dataSpace |= (matrix == C2Color::MATRIX_BT2020CONSTANT
+                        ? HAL_DATASPACE_STANDARD_BT2020_CONSTANT_LUMINANCE
+                        : HAL_DATASPACE_STANDARD_BT2020);
+                break;
+            case C2Color::PRIMARIES_BT470_M:
+                dataSpace |= HAL_DATASPACE_STANDARD_BT470M;
+                break;
+            case C2Color::PRIMARIES_BT709:
+                dataSpace |= HAL_DATASPACE_STANDARD_BT709;
+                break;
+            default: break;
+        }
+    }
+
+    // convert legacy dataspace values to v0 values
+    const static
+    ALookup<android_dataspace, android_dataspace> sLegacyDataSpaceToV0 {
+        {
+            { HAL_DATASPACE_SRGB, HAL_DATASPACE_V0_SRGB },
+            { HAL_DATASPACE_BT709, HAL_DATASPACE_V0_BT709 },
+            { HAL_DATASPACE_SRGB_LINEAR, HAL_DATASPACE_V0_SRGB_LINEAR },
+            { HAL_DATASPACE_BT601_525, HAL_DATASPACE_V0_BT601_525 },
+            { HAL_DATASPACE_BT601_625, HAL_DATASPACE_V0_BT601_625 },
+            { HAL_DATASPACE_JFIF, HAL_DATASPACE_V0_JFIF },
+        }
+    };
+    sLegacyDataSpaceToV0.lookup((android_dataspace_t)dataSpace, (android_dataspace_t*)&dataSpace);
+
+    // HDR static info
+    std::shared_ptr<const C2StreamHdrStaticInfo::output> hdrStaticInfo =
+        std::static_pointer_cast<const C2StreamHdrStaticInfo::output>(
+                c2Buffer->getInfo(C2StreamHdrStaticInfo::output::PARAM_TYPE));
+
     Mutexed<OutputSurface>::Locked output(mOutputSurface);
     if (output->surface == nullptr) {
         ALOGE("no surface");
@@ -1331,8 +1467,13 @@ status_t CCodecBufferChannel::renderOutputBuffer(
         if (!higbp) {
             higbp = new TWGraphicBufferProducer<HGraphicBufferProducer>(igbp);
         }
-        // TODO: use id of block pool which is crated from component
-        mComponent->setOutputSurface(C2BlockPool::PLATFORM_START, higbp);
+        Mutexed<BlockPools>::Locked pools(mBlockPools);
+        // set output surface for managed pools (other than ion or gralloc-backed pool)
+        if (pools->outputPoolId >= C2BlockPool::PLATFORM_START
+                && pools->outputAllocatorId != C2PlatformAllocatorStore::GRALLOC
+                && pools->outputAllocatorId != C2PlatformAllocatorStore::ION) {
+            mComponent->setOutputSurface(pools->outputPoolId, higbp);
+        }
     }
 
     std::vector<C2ConstGraphicBlock> blocks = c2Buffer->data().graphicBlocks();
@@ -1378,20 +1519,47 @@ status_t CCodecBufferChannel::renderOutputBuffer(
     }
     native_handle_delete(grallocHandle);
 
-    // TODO
-    // revisit this after C2Fence implementation.
-    // apply dataspace and scaling mode (getting scaling mode from native_window is not possible.)
+    // TODO: revisit this after C2Fence implementation.
     android::IGraphicBufferProducer::QueueBufferInput qbi(
             timestampNs,
             false,
-            HAL_DATASPACE_UNKNOWN,
+            (android_dataspace_t)dataSpace,
             Rect(blocks.front().crop().left,
                  blocks.front().crop().top,
                  blocks.front().crop().right(),
                  blocks.front().crop().bottom()),
-            NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW,
-            0,
+            videoScalingMode,
+            transform,
             Fence::NO_FENCE, 0);
+    if (hdrStaticInfo) {
+        struct android_smpte2086_metadata smpte2086_meta = {
+            .displayPrimaryRed = {
+                hdrStaticInfo->mastering.red.x, hdrStaticInfo->mastering.red.y
+            },
+            .displayPrimaryGreen = {
+                hdrStaticInfo->mastering.green.x, hdrStaticInfo->mastering.green.y
+            },
+            .displayPrimaryBlue = {
+                hdrStaticInfo->mastering.blue.x, hdrStaticInfo->mastering.blue.y
+            },
+            .whitePoint = {
+                hdrStaticInfo->mastering.white.x, hdrStaticInfo->mastering.white.y
+            },
+            .maxLuminance = hdrStaticInfo->mastering.maxLuminance,
+            .minLuminance = hdrStaticInfo->mastering.minLuminance,
+        };
+
+        struct android_cta861_3_metadata cta861_meta = {
+            .maxContentLightLevel = hdrStaticInfo->maxCll,
+            .maxFrameAverageLightLevel = hdrStaticInfo->maxFall,
+        };
+
+        HdrMetadata hdr;
+        hdr.validTypes = HdrMetadata::SMPTE2086 | HdrMetadata::CTA861_3;
+        hdr.smpte2086 = smpte2086_meta;
+        hdr.cta8613 = cta861_meta;
+        qbi.setHdrMetadata(hdr);
+    }
     android::IGraphicBufferProducer::QueueBufferOutput qbo;
     result = igbp->queueBuffer(igbp_slot, qbi, &qbo);
     if (result != OK) {
@@ -1403,15 +1571,6 @@ status_t CCodecBufferChannel::renderOutputBuffer(
     int64_t mediaTimeUs = 0;
     (void)buffer->meta()->findInt64("timeUs", &mediaTimeUs);
     mCCodecCallback->onOutputFramesRendered(mediaTimeUs, timestampNs);
-
-    // XXX: Hack to keep C2Buffers unreleased until the consumer is done
-    //      reading the content. Eventually IGBP-based C2BlockPool should handle
-    //      the lifecycle.
-    output->bufferRefs.push_back(c2Buffer);
-    if (output->bufferRefs.size() > output->maxBufferCount + 1) {
-        output->bufferRefs.pop_front();
-        ALOGV("%zu buffer refs remaining", output->bufferRefs.size());
-    }
 
     return OK;
 }
@@ -1474,12 +1633,75 @@ status_t CCodecBufferChannel::start(
     if (err != C2_OK) {
         return UNKNOWN_ERROR;
     }
+
+    // TODO: get this from input format
     bool secure = mComponent->getName().find(".secure") != std::string::npos;
 
-    if (inputFormat != nullptr) {
-        Mutexed<std::unique_ptr<InputBuffers>>::Locked buffers(mInputBuffers);
+    std::shared_ptr<C2AllocatorStore> allocatorStore = GetCodec2PlatformAllocatorStore();
+    int poolMask = property_get_int32("debug.stagefright.c2-poolmask", 0);
 
+    if (inputFormat != nullptr) {
         bool graphic = (iStreamFormat.value == C2FormatVideo);
+        std::shared_ptr<C2BlockPool> pool;
+        {
+            Mutexed<BlockPools>::Locked pools(mBlockPools);
+
+            // set default allocator ID.
+            pools->inputAllocatorId = (graphic) ? C2PlatformAllocatorStore::BUFFERQUEUE
+                                                : C2PlatformAllocatorStore::ION;
+
+            // query C2PortAllocatorsTuning::input from component. If an allocator ID is obtained
+            // from component, create the input block pool with given ID. Otherwise, use default IDs.
+            std::vector<std::unique_ptr<C2Param>> params;
+            err = mComponent->query({ },
+                                    { C2PortAllocatorsTuning::input::PARAM_TYPE },
+                                    C2_DONT_BLOCK,
+                                    &params);
+            if ((err != C2_OK && err != C2_BAD_INDEX) || params.size() != 1) {
+                ALOGD("Query input allocators returned %zu params => %s (%u)",
+                        params.size(), asString(err), err);
+            } else if (err == C2_OK && params.size() == 1) {
+                C2PortAllocatorsTuning::input *inputAllocators =
+                    C2PortAllocatorsTuning::input::From(params[0].get());
+                if (inputAllocators && inputAllocators->flexCount() > 0) {
+                    std::shared_ptr<C2Allocator> allocator;
+                    // verify allocator IDs and resolve default allocator
+                    allocatorStore->fetchAllocator(inputAllocators->m.values[0], &allocator);
+                    if (allocator) {
+                        pools->inputAllocatorId = allocator->getId();
+                    } else {
+                        ALOGD("component requested invalid input allocator ID %u",
+                                inputAllocators->m.values[0]);
+                    }
+                }
+            }
+
+            // TODO: use C2Component wrapper to associate this pool with ourselves
+            if ((poolMask >> pools->inputAllocatorId) & 1) {
+                err = CreateCodec2BlockPool(pools->inputAllocatorId, nullptr, &pool);
+                ALOGD("Created input block pool with allocatorID %u => poolID %llu - %s (%d)",
+                        pools->inputAllocatorId,
+                        (unsigned long long)(pool ? pool->getLocalId() : 111000111),
+                        asString(err), err);
+            } else {
+                err = C2_NOT_FOUND;
+            }
+            if (err != C2_OK) {
+                C2BlockPool::local_id_t inputPoolId =
+                    graphic ? C2BlockPool::BASIC_GRAPHIC : C2BlockPool::BASIC_LINEAR;
+                err = GetCodec2BlockPool(inputPoolId, nullptr, &pool);
+                ALOGD("Using basic input block pool with poolID %llu => got %llu - %s (%d)",
+                        (unsigned long long)inputPoolId,
+                        (unsigned long long)(pool ? pool->getLocalId() : 111000111),
+                        asString(err), err);
+                if (err != C2_OK) {
+                    return NO_MEMORY;
+                }
+            }
+            pools->inputPool = pool;
+        }
+
+        Mutexed<std::unique_ptr<InputBuffers>>::Locked buffers(mInputBuffers);
         if (graphic) {
             if (mInputSurface) {
                 buffers->reset(new DummyInputBuffers);
@@ -1493,7 +1715,7 @@ status_t CCodecBufferChannel::start(
                 if (mDealer == nullptr) {
                     mDealer = new MemoryDealer(
                             align(kLinearBufferSize, MemoryDealer::getAllocationAlignment())
-                                * (kMinBufferArraySize + 1),
+                                * (kMinInputBufferArraySize + 1),
                             "EncryptedLinearInputBuffers");
                     mDecryptDestination = mDealer->allocate(kLinearBufferSize);
                 }
@@ -1510,16 +1732,6 @@ status_t CCodecBufferChannel::start(
         }
         (*buffers)->setFormat(inputFormat);
 
-        ALOGV("graphic = %s", graphic ? "true" : "false");
-        std::shared_ptr<C2BlockPool> pool;
-        if (graphic) {
-            // TODO: create proper blockpool.
-            err = CreateCodec2BlockPool(
-                    C2PlatformAllocatorStore::BUFFERQUEUE, nullptr, &pool);
-        } else {
-            err = CreateCodec2BlockPool(
-                    C2PlatformAllocatorStore::ION, nullptr, &pool);
-        }
         if (err == C2_OK) {
             (*buffers)->setPool(pool);
         } else {
@@ -1534,9 +1746,71 @@ status_t CCodecBufferChannel::start(
             hasOutputSurface = (output->surface != nullptr);
         }
 
+        bool graphic = (oStreamFormat.value == C2FormatVideo);
+        C2BlockPool::local_id_t outputPoolId_;
+        {
+            Mutexed<BlockPools>::Locked pools(mBlockPools);
+
+            // set default allocator ID.
+            pools->outputAllocatorId = (graphic) ? C2PlatformAllocatorStore::BUFFERQUEUE
+                                                 : C2PlatformAllocatorStore::ION;
+
+            // query C2PortAllocatorsTuning::output from component, or use default allocator if
+            // unsuccessful.
+            std::vector<std::unique_ptr<C2Param>> params;
+            err = mComponent->query({ },
+                                    { C2PortAllocatorsTuning::output::PARAM_TYPE },
+                                    C2_DONT_BLOCK,
+                                    &params);
+            if ((err != C2_OK && err != C2_BAD_INDEX) || params.size() != 1) {
+                ALOGD("Query input allocators returned %zu params => %s (%u)",
+                        params.size(), asString(err), err);
+            } else if (err == C2_OK && params.size() == 1) {
+                C2PortAllocatorsTuning::output *outputAllocators =
+                    C2PortAllocatorsTuning::output::From(params[0].get());
+                if (outputAllocators && outputAllocators->flexCount() > 0) {
+                    std::shared_ptr<C2Allocator> allocator;
+                    // verify allocator IDs and resolve default allocator
+                    allocatorStore->fetchAllocator(outputAllocators->m.values[0], &allocator);
+                    if (allocator) {
+                        pools->outputAllocatorId = allocator->getId();
+                    } else {
+                        ALOGD("component requested invalid output allocator ID %u",
+                                outputAllocators->m.values[0]);
+                    }
+                }
+            }
+
+            if ((poolMask >> pools->outputAllocatorId) & 1) {
+                err = mComponent->createBlockPool(
+                        pools->outputAllocatorId, &pools->outputPoolId, &pools->outputPoolIntf);
+                ALOGI("Created output block pool with allocatorID %u => poolID %llu - %s",
+                        pools->outputAllocatorId,
+                        (unsigned long long)pools->outputPoolId,
+                        asString(err));
+            } else {
+                err = C2_NOT_FOUND;
+            }
+            if (err != C2_OK) {
+                // use basic pool instead
+                pools->outputPoolId =
+                    graphic ? C2BlockPool::BASIC_GRAPHIC : C2BlockPool::BASIC_LINEAR;
+            }
+
+            // Configure output block pool ID as parameter C2PortBlockPoolsTuning::output to
+            // component.
+            std::unique_ptr<C2PortBlockPoolsTuning::output> poolIdsTuning =
+                    C2PortBlockPoolsTuning::output::AllocUnique({ pools->outputPoolId });
+
+            std::vector<std::unique_ptr<C2SettingResult>> failures;
+            err = mComponent->config({ poolIdsTuning.get() }, C2_MAY_BLOCK, &failures);
+            ALOGD("Configured output block pool ids %llu => %s",
+                    (unsigned long long)poolIdsTuning->m.values[0], asString(err));
+            outputPoolId_ = pools->outputPoolId;
+        }
+
         Mutexed<std::unique_ptr<OutputBuffers>>::Locked buffers(mOutputBuffers);
 
-        bool graphic = (oStreamFormat.value == C2FormatVideo);
         if (graphic) {
             if (hasOutputSurface) {
                 buffers->reset(new GraphicOutputBuffers);
@@ -1547,12 +1821,26 @@ status_t CCodecBufferChannel::start(
             buffers->reset(new LinearOutputBuffers);
         }
         (*buffers)->setFormat(outputFormat->dup());
+
+
+        // Try to set output surface to created block pool if given.
+        if (hasOutputSurface) {
+            Mutexed<OutputSurface>::Locked output(mOutputSurface);
+            sp<IGraphicBufferProducer> igbp = output->surface->getIGraphicBufferProducer();
+            if (mOutputBufferQueue->isNewIgbp(igbp)) {
+                sp<HGraphicBufferProducer> higbp = igbp->getHalInterface();
+                if (!higbp) {
+                    higbp = new TWGraphicBufferProducer<HGraphicBufferProducer>(igbp);
+                }
+                mComponent->setOutputSurface(outputPoolId_, higbp);
+            }
+        }
     }
 
     mSync.start();
     if (mInputSurface == nullptr) {
         // TODO: use proper buffer depth instead of this random value
-        for (size_t i = 0; i < kMinBufferArraySize; ++i) {
+        for (size_t i = 0; i < kMinInputBufferArraySize; ++i) {
             size_t index;
             sp<MediaCodecBuffer> buffer;
             {
@@ -1587,6 +1875,7 @@ void CCodecBufferChannel::stop() {
 }
 
 void CCodecBufferChannel::flush(const std::list<std::unique_ptr<C2Work>> &flushedWork) {
+    ALOGV("flush");
     {
         Mutexed<std::unique_ptr<InputBuffers>>::Locked buffers(mInputBuffers);
         (*buffers)->flush();
@@ -1632,6 +1921,7 @@ bool CCodecBufferChannel::handleWork(
     const std::unique_ptr<C2Worklet> &worklet = work->worklets.front();
     if ((worklet->output.ordinal.frameIndex - mFirstValidFrameIndex.load()).peek() < 0) {
         // Discard frames from previous generation.
+        ALOGD("Discard frames from previous generation.");
         return true;
     }
     std::shared_ptr<C2Buffer> buffer;
@@ -1727,7 +2017,7 @@ bool CCodecBufferChannel::handleWork(
 status_t CCodecBufferChannel::setSurface(const sp<Surface> &newSurface) {
     if (newSurface != nullptr) {
         newSurface->setScalingMode(NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
-        newSurface->setMaxDequeuedBufferCount(kMinBufferArraySize);
+        newSurface->setMaxDequeuedBufferCount(kMinOutputBufferArraySize);
     }
 
     Mutexed<OutputSurface>::Locked output(mOutputSurface);
@@ -1752,9 +2042,6 @@ status_t CCodecBufferChannel::setSurface(const sp<Surface> &newSurface) {
     sp<GraphicBuffer> gbuf = GraphicBuffer::from(buf);
     output->generation = gbuf->getGenerationNumber();
     window->cancelBuffer(window, buf, fenceFd);
-    output->bufferRefs.clear();
-    // XXX: hack
-    output->maxBufferCount = kMaxGraphicBufferRefCount;
 
     return OK;
 }

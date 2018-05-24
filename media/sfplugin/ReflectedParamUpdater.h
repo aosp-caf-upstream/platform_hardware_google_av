@@ -111,6 +111,12 @@ public:
             std::shared_ptr<C2ParamDescriptor> paramDesc, const C2StructDescriptor &structDesc,
             bool markVendor = true);
 
+
+    /**
+     * Returns the name of the parameter for an index.
+     */
+    std::string getParamName(C2Param::Index index) const;
+
     /**
      * Get list of param indices from field names and values in AMessage object.
      *
@@ -167,6 +173,7 @@ private:
         size_t offset;
     };
     std::map<std::string, FieldDesc> mMap;
+    std::map<C2Param::Index, std::string> mParamNames;
 
     void parseMessageAndDoWork(
             const Dict &params,
