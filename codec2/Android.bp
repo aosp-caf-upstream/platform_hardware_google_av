@@ -62,11 +62,12 @@ cc_library_shared {
     ],
 
     shared_libs: [
+        "libcutils",
         "liblog",
         "libstagefright_codec2",
         "libstagefright_codec2_vndk",
         "libstagefright_foundation",
-	"libutils",
+        "libutils",
     ],
 
     sanitize: {

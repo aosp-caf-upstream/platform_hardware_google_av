@@ -252,6 +252,14 @@ void CCodecConfig::initializeStandardParams() {
         return C2Value();
     };
 
+    ConfigMapper::Mapper negate = [](C2Value v) -> C2Value {
+        int32_t value;
+        if (v.get(&value)) {
+            return -value;
+        }
+        return C2Value();
+    };
+
     add(ConfigMapper(KEY_MIME,     C2_PARAMKEY_INPUT_MEDIA_TYPE,    "value")
         .limitTo(D::INPUT & D::READ));
     add(ConfigMapper(KEY_MIME,     C2_PARAMKEY_OUTPUT_MEDIA_TYPE,   "value")
@@ -289,8 +297,13 @@ void CCodecConfig::initializeStandardParams() {
     // remove when codecs switch to PARAMKEY
     deprecated(ConfigMapper(KEY_MAX_INPUT_SIZE, "coded.max-frame-size", "value")
                .limitTo(D::INPUT));
+    // SDK rotation is clock-wise
     add(ConfigMapper(KEY_ROTATION, C2_PARAMKEY_VUI_ROTATION, "value")
-        .limitTo(D::VIDEO));
+        .limitTo(D::VIDEO & D::CODED)
+        .withMappers(negate, negate));
+    add(ConfigMapper(KEY_ROTATION, C2_PARAMKEY_ROTATION, "value")
+        .limitTo(D::VIDEO & D::RAW)
+        .withMappers(negate, negate));
 
     add(ConfigMapper(std::string(KEY_FEATURE_) + FEATURE_SecurePlayback,
                      C2_PARAMKEY_SECURE_MODE, "value"));
@@ -327,19 +340,7 @@ void CCodecConfig::initializeStandardParams() {
     add(ConfigMapper(KEY_OPERATING_RATE,   C2_PARAMKEY_OPERATING_RATE,     "value"));
     // C2 priorities are inverted
     add(ConfigMapper(KEY_PRIORITY,         C2_PARAMKEY_PRIORITY,           "value")
-        .withMappers([](C2Value v) -> C2Value {
-            int32_t value;
-            if (v.get(&value)) {
-                return -value;
-            }
-            return C2Value();
-        }, [](C2Value v) -> C2Value {
-            int32_t value;
-            if (v.get(&value)) {
-                return -value;
-            }
-            return C2Value();
-        }));
+        .withMappers(negate, negate));
     // remove when codecs switch to PARAMKEY
     deprecated(ConfigMapper(KEY_OPERATING_RATE,   "ctrl.operating-rate",     "value")
                .withMapper(makeFloat));
@@ -462,7 +463,6 @@ void CCodecConfig::initializeStandardParams() {
     constexpr char KEY_PUSH_BLANK_BUFFERS_ON_STOP[] = "push-blank-buffers-on-shutdown";
     constexpr char KEY_QUALITY[] = "quality";
     constexpr char KEY_REPEAT_PREVIOUS_FRAME_AFTER[] = "repeat-previous-frame-after";
-    constexpr char KEY_ROTATION[] = "rotation-degrees";
     constexpr char KEY_SLICE_HEIGHT[] = "slice-height";
     constexpr char KEY_STRIDE[] = "stride";
     constexpr char KEY_TEMPORAL_LAYERING[] = "ts-schema";
@@ -542,6 +542,9 @@ status_t CCodecConfig::initialize(
         // TODO: return error once we complete implementation.
         return UNKNOWN_ERROR;
     }
+    for (const std::shared_ptr<C2ParamDescriptor> &desc : mParamDescs) {
+        mSupportedIndices.emplace(desc->index());
+    }
 
     mReflector = client->getParamReflector();
     if (mReflector == nullptr) {
@@ -558,6 +561,20 @@ status_t CCodecConfig::initialize(
     // TEMP: add some standard fields even if not reflected
     if (kind.value == C2Component::KIND_ENCODER) {
         mParamUpdater->addStandardParam<C2StreamInitDataInfo::output>(C2_PARAMKEY_INIT_DATA);
+    }
+    if (kind.value != C2Component::KIND_ENCODER
+            && (domain.value == C2Component::DOMAIN_IMAGE
+                    || domain.value == C2Component::DOMAIN_VIDEO)) {
+        addLocalParam<C2StreamPictureSizeInfo::output>(C2_PARAMKEY_PICTURE_SIZE);
+        addLocalParam<C2StreamCropRectInfo::output>(C2_PARAMKEY_CROP_RECT);
+        addLocalParam(
+                new C2StreamPixelAspectRatioInfo::output(0u, 1u, 1u),
+                C2_PARAMKEY_PIXEL_ASPECT_RATIO);
+        addLocalParam(new C2StreamRotationInfo::output(0u, 0), C2_PARAMKEY_ROTATION);
+        addLocalParam(new C2StreamColorAspectsInfo::output(0u), C2_PARAMKEY_COLOR_ASPECTS);
+        addLocalParam<C2StreamHdrStaticInfo::output>(C2_PARAMKEY_HDR_STATIC_INFO);
+        addLocalParam<C2StreamDataSpaceInfo::output>(C2_PARAMKEY_DATA_SPACE);
+        addLocalParam<C2StreamSurfaceScalingInfo::output>(C2_PARAMKEY_SURFACE_SCALING_MODE);
     }
 
     initializeStandardParams();
@@ -880,7 +897,18 @@ status_t CCodecConfig::getConfigUpdateFromSdkParams(
     }
 
     configUpdate->clear();
-    c2_status_t err = component->query({}, indices, blocking, configUpdate);
+    std::vector<C2Param::Index> supportedIndices;
+    for (C2Param::Index ix : indices) {
+        if (mSupportedIndices.count(ix)) {
+            supportedIndices.push_back(ix);
+        } else if (mLocalParams.count(ix)) {
+            // query local parameter here
+            auto it = mCurrentConfig.find(ix);
+            configUpdate->emplace_back(C2Param::Copy(*it->second));
+        }
+    }
+
+    c2_status_t err = component->query({ }, supportedIndices, blocking, configUpdate);
     if (err != C2_OK) {
         ALOGD("query failed after returning %zu params => %s", configUpdate->size(), asString(err));
     }
@@ -895,6 +923,7 @@ status_t CCodecConfig::setParameters(
         std::shared_ptr<Codec2Client::Component> component,
         std::vector<std::unique_ptr<C2Param>> &configUpdate,
         c2_blocking_t blocking) {
+    status_t result = OK;
     if (configUpdate.empty()) {
         return OK;
     }
@@ -902,8 +931,29 @@ status_t CCodecConfig::setParameters(
     std::vector<C2Param::Index> indices;
     std::vector<C2Param *> paramVector;
     for (const std::unique_ptr<C2Param> &param : configUpdate) {
-        paramVector.push_back(param.get());
-        indices.push_back(param->index());
+        if (mSupportedIndices.count(param->index())) {
+            // component parameter
+            paramVector.push_back(param.get());
+            indices.push_back(param->index());
+        } else if (mLocalParams.count(param->index())) {
+            // handle local parameter here
+            LocalParamValidator validator = mLocalParams.find(param->index())->second;
+            c2_status_t err = C2_OK;
+            std::unique_ptr<C2Param> copy = C2Param::Copy(*param);
+            if (validator) {
+                err = validator(copy);
+            }
+            if (err == C2_OK) {
+                ALOGV("updated local parameter value for %s",
+                        mParamUpdater->getParamName(param->index()).c_str());
+
+                mCurrentConfig[param->index()] = std::move(copy);
+            } else {
+                ALOGD("failed to set parameter value for %s => %s",
+                        mParamUpdater->getParamName(param->index()).c_str(), asString(err));
+                result = BAD_VALUE;
+            }
+        }
     }
     // update subscribed param indices
     subscribeToConfigUpdate(component, indices, blocking);
@@ -925,7 +975,7 @@ status_t CCodecConfig::setParameters(
     (void)updateConfiguration(configUpdate, ALL);
 
     // TODO: error value
-    return OK;
+    return result;
 }
 
 const C2Param *CCodecConfig::getConfigParameterValue(C2Param::Index index) const {

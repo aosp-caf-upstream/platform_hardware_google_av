@@ -105,13 +105,24 @@ struct CCodecConfig {
     // standard MediaCodec to Codec 2.0 params mapping
     std::shared_ptr<StandardParams> mStandardParams;
 
+    std::set<C2Param::Index> mSupportedIndices; ///< indices supported by the component
     std::set<C2Param::Index> mSubscribedIndices; ///< indices to subscribe to
     size_t mSubscribedIndicesSize; ///< count of currently subscribed indices
 
     sp<AMessage> mInputFormat;
     sp<AMessage> mOutputFormat;
 
+    /// the current configuration. Updated after configure() and based on configUpdate in
+    /// onWorkDone
     std::map<C2Param::Index, std::unique_ptr<C2Param>> mCurrentConfig;
+
+    typedef std::function<c2_status_t(std::unique_ptr<C2Param>&)> LocalParamValidator;
+
+    /// Parameter indices tracked in current config that are not supported by the component.
+    /// these are provided so that optional parameters can remain in the current configuration.
+    /// as such, these parameters have no dependencies. TODO: use C2InterfaceHelper for this.
+    /// For now support a validation function.
+    std::map<C2Param::Index, LocalParamValidator> mLocalParams;
 
     CCodecConfig();
 
@@ -121,6 +132,80 @@ struct CCodecConfig {
     status_t initialize(
             const std::shared_ptr<Codec2Client> &client,
             const std::shared_ptr<Codec2Client::Component> &component);
+
+
+    /**
+     * Adds a locally maintained parameter. This is used for output configuration that can be
+     * appended to the output buffers in case it is not supported by the component.
+     */
+    template<typename T>
+    bool addLocalParam(
+            const std::string &name,
+            C2ParamDescriptor::attrib_t attrib = C2ParamDescriptor::IS_READ_ONLY,
+            std::function<c2_status_t(std::unique_ptr<T>&)> validator_ =
+                std::function<c2_status_t(std::unique_ptr<T>&)>()) {
+        C2Param::Index index = T::PARAM_TYPE;
+        if (mSupportedIndices.count(index) || mLocalParams.count(index)) {
+            if (mSupportedIndices.count(index)) {
+                mSubscribedIndices.emplace(index);
+            }
+            ALOGD("ignoring local param %s (%#x) as it is already %s",
+                    name.c_str(), (uint32_t)index, mSupportedIndices.count(index) ? "supported" : "local");
+            return false; // already supported by the component or already added
+        }
+
+        // wrap typed validator into untyped validator
+        LocalParamValidator validator;
+        if (validator_) {
+            validator = [validator_](std::unique_ptr<C2Param>& p){
+                c2_status_t res = C2_BAD_VALUE;
+                std::unique_ptr<T> typed(static_cast<T*>(p.release()));
+                // if parameter is correctly typed
+                if (T::From(typed.get())) {
+                    res = validator_(typed);
+                    p.reset(typed.release());
+                }
+                return res;
+            };
+        }
+
+        mLocalParams.emplace(index, validator);
+        mParamUpdater->addStandardParam<T>(name, attrib);
+        return true;
+    }
+
+    /**
+     * Adds a locally maintained parameter with a default value.
+     */
+    template<typename T>
+    bool addLocalParam(
+            std::unique_ptr<T> default_,
+            const std::string &name,
+            C2ParamDescriptor::attrib_t attrib = C2ParamDescriptor::IS_READ_ONLY,
+            std::function<c2_status_t(std::unique_ptr<T>&)> validator_ =
+                std::function<c2_status_t(std::unique_ptr<T>&)>()) {
+        if (addLocalParam<T>(name, attrib, validator_)) {
+            if (validator_) {
+                c2_status_t err = validator_(default_);
+                if (err != C2_OK) {
+                    ALOGD("default value for %s is invalid => %s", name.c_str(), asString(err));
+                    return false;
+                }
+            }
+            mCurrentConfig[T::PARAM_TYPE] = std::move(default_);
+            return true;
+        }
+        return false;
+    }
+
+    template<typename T>
+    bool addLocalParam(
+            T *default_, const std::string &name,
+            C2ParamDescriptor::attrib_t attrib = C2ParamDescriptor::IS_READ_ONLY,
+            std::function<c2_status_t(std::unique_ptr<T>&)> validator_ =
+                std::function<c2_status_t(std::unique_ptr<T>&)>()) {
+        return addLocalParam(std::unique_ptr<T>(default_), name, attrib, validator_);
+    }
 
     /// Applies configuration updates, and updates format in the specific domain.
     /// Returns true if formats were updated

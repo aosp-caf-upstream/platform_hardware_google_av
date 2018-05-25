@@ -210,11 +210,18 @@ private:
     struct OutputSurface {
         sp<Surface> surface;
         uint32_t generation;
-        std::list<std::shared_ptr<C2Buffer>> bufferRefs;
-        size_t maxBufferCount;
     };
     Mutexed<OutputSurface> mOutputSurface;
     std::unique_ptr<OutputBufferQueue> mOutputBufferQueue;
+
+    struct BlockPools {
+        C2Allocator::id_t inputAllocatorId;
+        std::shared_ptr<C2BlockPool> inputPool;
+        C2Allocator::id_t outputAllocatorId;
+        C2BlockPool::local_id_t outputPoolId;
+        std::shared_ptr<Codec2Client::Configurable> outputPoolIntf;
+    };
+    Mutexed<BlockPools> mBlockPools;
 
     std::shared_ptr<InputSurfaceWrapper> mInputSurface;
 

@@ -39,6 +39,19 @@ namespace android {
 using Traits = C2Component::Traits;
 
 status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
+    // TODO: Remove run-time configurations once all codecs are working
+    // properly. (Assume "full" behavior eventually.)
+    //
+    // debug.stagefright.ccodec supports 2 values.
+    //   "0" - Only OMX components are available.
+    //   "1" - Codec2.0 software audio decoders are available and preferred over
+    //         OMX software audio decoders.
+    //         c2.qti.avc.decoder and c2.qti.avc.encoder are available, but
+    //         ranked after OMX components.
+    //
+    // The default value (boot time) is "1".
+    int option = property_get_bool("debug.stagefright.ccodec", 1);
+
     // Obtain Codec2Client
     std::vector<Traits> traits = Codec2Client::ListComponents();
 
@@ -54,6 +67,26 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
             ALOGD("%s not found in xml", trait.name.c_str());
             continue;
         }
+
+        // TODO: Remove this block once all codecs are enabled by default.
+        C2Component::rank_t rank = trait.rank;
+        switch (option) {
+        case 0:
+            continue;
+        case 1:
+            if (trait.name.compare("c2.qti.avc.decoder") == 0 ||
+                    trait.name.compare("c2.qti.avc.encoder") == 0) {
+                rank = 0x10000;
+            } else if (trait.name.compare(0, 11, "c2.android.") != 0) {
+                continue;
+            } else if (trait.domain == C2Component::DOMAIN_AUDIO &&
+                    trait.kind == C2Component::KIND_DECODER) {
+                rank = 1;
+            } else {
+                continue;
+            }
+        }
+
         const MediaCodecsXmlParser::CodecProperties &codec = parser.getCodecMap().at(trait.name);
         std::unique_ptr<MediaCodecInfoWriter> codecInfo = writer->addMediaCodecInfo();
         codecInfo->setName(trait.name.c_str());
@@ -61,7 +94,7 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
         // TODO: get this from trait.kind
         bool encoder = (trait.name.find("encoder") != std::string::npos);
         codecInfo->setEncoder(encoder);
-        codecInfo->setRank(trait.rank);
+        codecInfo->setRank(rank);
         for (auto typeIt = codec.typeMap.begin(); typeIt != codec.typeMap.end(); ++typeIt) {
             const std::string &mediaType = typeIt->first;
             const MediaCodecsXmlParser::AttributeMap &attrMap = typeIt->second;

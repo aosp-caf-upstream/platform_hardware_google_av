@@ -299,6 +299,20 @@ public:
             return forStream() ? rawStream() : ~0U;
         }
 
+        /// Returns an index with stream field set to given stream.
+        inline Index withStream(unsigned stream) const {
+            Index ix = mIndex;
+            (void)ix.setStream(stream);
+            return ix;
+        }
+
+        /// sets the port (direction). Returns true iff successful.
+        inline Index withPort(bool output) const {
+            Index ix = mIndex;
+            (void)ix.setPort(output);
+            return ix;
+        }
+
         DEFINE_FIELD_BASED_COMPARISON_OPERATORS(Index, mIndex)
 
     private:
@@ -329,6 +343,21 @@ public:
                 stream = MAX_STREAM_ID;
             }
             return (stream << STREAM_ID_SHIFT) & STREAM_ID_MASK;
+        }
+
+        inline bool convertToStream(bool output, unsigned stream) {
+            mIndex = (mIndex & ~DIR_MASK) | IS_STREAM_FLAG;
+            (void)setPort(output);
+            return setStream(stream);
+        }
+
+        inline void convertToPort(bool output) {
+            mIndex = (mIndex & ~(DIR_MASK | IS_STREAM_FLAG));
+            (void)setPort(output);
+        }
+
+        inline void convertToGlobal() {
+            mIndex = (mIndex & ~(DIR_MASK | IS_STREAM_FLAG)) | DIR_GLOBAL;
         }
 
         /**
@@ -417,6 +446,34 @@ public:
         C2Param *param = new (mem) C2Param(orig.size(), orig._mIndex);
         param->updateFrom(orig);
         return std::unique_ptr<C2Param>(param);
+    }
+
+    /// Returns managed clone of |orig| as a stream parameter at heap.
+    inline static std::unique_ptr<C2Param> CopyAsStream(
+            const C2Param &orig, bool output, unsigned stream) {
+        std::unique_ptr<C2Param> copy = Copy(orig);
+        if (copy) {
+            copy->_mIndex.convertToStream(output, stream);
+        }
+        return copy;
+    }
+
+    /// Returns managed clone of |orig| as a port parameter at heap.
+    inline static std::unique_ptr<C2Param> CopyAsPort(const C2Param &orig, bool output) {
+        std::unique_ptr<C2Param> copy = Copy(orig);
+        if (copy) {
+            copy->_mIndex.convertToPort(output);
+        }
+        return copy;
+    }
+
+    /// Returns managed clone of |orig| as a global parameter at heap.
+    inline static std::unique_ptr<C2Param> CopyAsGlobal(const C2Param &orig) {
+        std::unique_ptr<C2Param> copy = Copy(orig);
+        if (copy) {
+            copy->_mIndex.convertToGlobal();
+        }
+        return copy;
     }
 
 #if 0

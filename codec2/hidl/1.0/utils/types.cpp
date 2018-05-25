@@ -255,12 +255,28 @@ Status objcpy(
         const C2Component::Traits &s) {
     d->name = s.name;
 
-    // TODO: Currently, we do not have any domain values defined in Codec2.0.
-    d->domain = IComponentStore::ComponentTraits::Domain::OTHER;
+    switch (s.domain) {
+    case C2Component::DOMAIN_VIDEO:
+        d->domain = IComponentStore::ComponentTraits::Domain::VIDEO;
+        break;
+    case C2Component::DOMAIN_AUDIO:
+        d->domain = IComponentStore::ComponentTraits::Domain::AUDIO;
+        break;
+    default:
+        d->domain = IComponentStore::ComponentTraits::Domain::OTHER;
+    }
     d->domainOther = static_cast<uint32_t>(s.domain);
 
-    // TODO: Currently, we do not have any kind values defined in Codec2.0.
-    d->kind = IComponentStore::ComponentTraits::Kind::OTHER;
+    switch (s.kind) {
+    case C2Component::KIND_DECODER:
+        d->kind = IComponentStore::ComponentTraits::Kind::DECODER;
+        break;
+    case C2Component::KIND_ENCODER:
+        d->kind = IComponentStore::ComponentTraits::Kind::ENCODER;
+        break;
+    default:
+        d->kind = IComponentStore::ComponentTraits::Kind::OTHER;
+    }
     d->kindOther = static_cast<uint32_t>(s.kind);
 
     d->rank = static_cast<uint32_t>(s.rank);
@@ -281,8 +297,29 @@ c2_status_t objcpy(
         std::unique_ptr<std::vector<std::string>>* aliasesBuffer,
         const IComponentStore::ComponentTraits& s) {
     d->name = s.name.c_str();
-    d->domain = static_cast<C2Component::domain_t>(s.domainOther);
-    d->kind = static_cast<C2Component::kind_t>(s.kindOther);
+
+    switch (s.domain) {
+    case IComponentStore::ComponentTraits::Domain::VIDEO:
+        d->domain = C2Component::DOMAIN_VIDEO;
+        break;
+    case IComponentStore::ComponentTraits::Domain::AUDIO:
+        d->domain = C2Component::DOMAIN_AUDIO;
+        break;
+    default:
+        d->domain = static_cast<C2Component::domain_t>(s.domainOther);
+    }
+
+    switch (s.kind) {
+    case IComponentStore::ComponentTraits::Kind::DECODER:
+        d->kind = C2Component::KIND_DECODER;
+        break;
+    case IComponentStore::ComponentTraits::Kind::ENCODER:
+        d->kind = C2Component::KIND_ENCODER;
+        break;
+    default:
+        d->kind = static_cast<C2Component::kind_t>(s.kindOther);
+    }
+
     d->rank = static_cast<C2Component::rank_t>(s.rank);
     d->mediaType = s.mediaType.c_str();
 
