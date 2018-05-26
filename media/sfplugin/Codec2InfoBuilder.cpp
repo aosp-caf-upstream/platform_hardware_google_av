@@ -81,7 +81,7 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
                 continue;
             } else if (trait.domain == C2Component::DOMAIN_AUDIO &&
                     trait.kind == C2Component::KIND_DECODER) {
-                rank = 1;
+                rank = 0x10000; // TODO: change this to 1;
             } else {
                 continue;
             }
