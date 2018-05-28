@@ -16,6 +16,7 @@ cc_library {
         "libcutils",
         "libfmq",
         "libhidlbase",
+        "libhwbinder",
         "libhidltransport",
         "liblog",
         "libutils",

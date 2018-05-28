@@ -58,8 +58,6 @@ private:
 
 /// \endcond
 
-#ifdef __C2_GENERATE_GLOBAL_VARS__
-
 class _C2EnumUtils {
     static C2String camelCaseToDashed(C2String name);
 
@@ -70,10 +68,11 @@ class _C2EnumUtils {
     friend class C2UtilTest_EnumUtilsTest_Test;
 
 public:
-    static std::vector<C2String> parseEnumValuesFromString(C2StringLiteral value);
+    // this may not be used...
+    static C2_HIDE std::vector<C2String> parseEnumValuesFromString(C2StringLiteral value);
 
     template<typename T>
-    static C2FieldDescriptor::NamedValuesType sanitizeEnumValues(
+    static C2_HIDE C2FieldDescriptor::NamedValuesType sanitizeEnumValues(
             std::vector<T> values,
             std::vector<C2StringLiteral> names,
             C2StringLiteral prefix = NULL) {
@@ -86,7 +85,7 @@ public:
     }
 
     template<typename E>
-    static C2FieldDescriptor::NamedValuesType customEnumValues(
+    static C2_HIDE C2FieldDescriptor::NamedValuesType customEnumValues(
             std::vector<std::pair<C2StringLiteral, E>> items) {
         C2FieldDescriptor::NamedValuesType namedValues;
         for (auto &item : items) {
@@ -97,6 +96,13 @@ public:
 };
 
 #define DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, ...) \
+    _DEFINE_C2_ENUM_VALUE_AUTO_HELPER(__C2_GENERATE_GLOBAL_VARS__, name, type, prefix, \
+            ##__VA_ARGS__)
+#define _DEFINE_C2_ENUM_VALUE_AUTO_HELPER(enabled, name, type, prefix, ...) \
+    __DEFINE_C2_ENUM_VALUE_AUTO_HELPER(enabled, name, type, prefix, ##__VA_ARGS__)
+#define __DEFINE_C2_ENUM_VALUE_AUTO_HELPER(enabled, name, type, prefix, ...) \
+    ___DEFINE_C2_ENUM_VALUE_AUTO_HELPER##enabled(name, type, prefix, ##__VA_ARGS__)
+#define ___DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, ...) \
 template<> \
 C2FieldDescriptor::NamedValuesType C2FieldDescriptor::namedValuesFor(const name &r __unused) { \
     return _C2EnumUtils::sanitizeEnumValues( \
@@ -104,20 +110,21 @@ C2FieldDescriptor::NamedValuesType C2FieldDescriptor::namedValuesFor(const name 
             { _C2_MAP(_C2_GET_ENUM_NAME, type, __VA_ARGS__) }, \
             prefix); \
 }
+#define ___DEFINE_C2_ENUM_VALUE_AUTO_HELPER__C2_GENERATE_GLOBAL_VARS__(name, type, prefix, ...)
 
 #define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names) \
+    _DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(__C2_GENERATE_GLOBAL_VARS__, name, names)
+#define _DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(enabled, name, names) \
+    __DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(enabled, name, names)
+#define __DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(enabled, name, names) \
+    ___DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER##enabled(name, names)
+#define ___DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names) \
 template<> \
 C2FieldDescriptor::NamedValuesType C2FieldDescriptor::namedValuesFor(const name &r __unused) { \
     return _C2EnumUtils::customEnumValues( \
             std::vector<std::pair<C2StringLiteral, name>> names); \
 }
-
-#else
-
-#define DEFINE_C2_ENUM_VALUE_AUTO_HELPER(name, type, prefix, ...)
-#define DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names)
-
-#endif
+#define ___DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER__C2_GENERATE_GLOBAL_VARS__(name, names)
 
 /**
  * Defines an enum type with the default named value mapper. The default mapper
@@ -189,13 +196,15 @@ DEFINE_C2_ENUM_VALUE_CUSTOM_HELPER(name, names)
 
 /**
  * Make enums usable as their integral types.
+ *
+ * Note: this makes them not usable in printf()
  */
 template<class E>
 struct C2EasyEnum {
     using U = typename std::underlying_type<E>::type;
     E value;
     // define conversion functions
-    constexpr operator E() const { return value; }
+    inline constexpr operator E() const { return value; }
     inline constexpr C2EasyEnum(E value_) : value(value_) { }
     inline constexpr C2EasyEnum(U value_) : value(E(value_)) { }
     inline constexpr C2EasyEnum() = default;

@@ -28,6 +28,7 @@
 #include <hidl/HidlSupport.h>
 #include <utils/StrongPointer.h>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -171,6 +172,8 @@ struct Codec2Client : public Codec2ConfigurableClient {
 
     typedef Codec2Client Store;
 
+    std::string getInstanceName() const { return mInstanceName; }
+
     c2_status_t createComponent(
             const C2String& name,
             const std::shared_ptr<Listener>& listener,
@@ -202,17 +205,31 @@ struct Codec2Client : public Codec2ConfigurableClient {
             const std::shared_ptr<Listener>& listener,
             std::shared_ptr<Codec2Client>* owner = nullptr);
 
+    // Try to create a component interface with a given name from all known
+    // IComponentStore services.
+    static std::shared_ptr<Interface> CreateInterfaceByName(
+            const char* interfaceName,
+            std::shared_ptr<Codec2Client>* owner = nullptr);
+
     // List traits from all known IComponentStore services.
     static const std::vector<C2Component::Traits>& ListComponents();
 
     // base cannot be null.
-    Codec2Client(const sp<Base>& base);
+    Codec2Client(const sp<Base>& base, std::string instanceName);
 
 protected:
     Base* base() const;
 
+    // Finds the first store where the predicate returns OK, and returns the last
+    // predicate result. Uses key to remember the last store found, and if cached,
+    // it tries that store before trying all stores (one retry).
+    static c2_status_t ForAllStores(
+            const std::string& key,
+            std::function<c2_status_t(const std::shared_ptr<Codec2Client>&)> predicate);
+
     mutable std::mutex mMutex;
     mutable bool mListed;
+    std::string mInstanceName;
     mutable std::vector<C2Component::Traits> mTraitsList;
     mutable std::vector<std::unique_ptr<std::vector<std::string>>>
             mAliasesBuffer;

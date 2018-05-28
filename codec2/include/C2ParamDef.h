@@ -218,31 +218,37 @@ protected:
 
 /**
  * Define flexible allocators (AllocShared or AllocUnique) for flexible params.
- *  - P::AllocXyz(flexCount, args...): allocate for given flex-count.
- *  - P::AllocXyz(args..., T[]): allocate for size of (and with) init array.
- *  - P::AllocXyz(T[]): allocate for size of (and with) init array with no other args.
- *  - P::AllocXyz(args..., std::initializer_list<T>): allocate for size of (and with) initializer
- *    list.
+ *  - P::AllocXyz(flexCount, args...): allocate for given flex-count. This maps to
+ *          T(flexCount, args...)\
+ *
+ * Clang does not support args... followed by templated param as args... eats it. Hence,
+ * provide specializations where the initializer replaces the flexCount.
+ *
+ * Specializations that deduce flexCount:
+ *  - P::AllocXyz(T[], args...): allocate for size of (and with) init array.
+ *  - P::AllocXyz(std::initializer_list<T>, args...): allocate for size of (and with) initializer
+ *            list.
+ *  - P::AllocXyz(std::vector<T>, args...): allocate for size of (and with) init vector.
+ *  These specializations map to T(flexCount = size-of-init, args..., init)
  */
 #define DEFINE_FLEXIBLE_ALLOC(_Type, S, ptr, Ptr) \
     template<typename ...Args> \
     inline static std::ptr##_ptr<_Type> Alloc##Ptr(size_t flexCount, const Args(&... args)) { \
         return std::ptr##_ptr<_Type>(new(flexCount) _Type(flexCount, args...)); \
     } \
-    /* NOTE: unfortunately this is not supported by clang yet */ \
-    template<typename ...Args, typename U=typename S::FlexType, unsigned N> \
-    inline static std::ptr##_ptr<_Type> Alloc##Ptr(const Args(&... args), const U(&init)[N]) { \
-        return std::ptr##_ptr<_Type>(new(N) _Type(N, args..., init)); \
-    } \
-    /* so for now, specialize for no args */ \
-    template<typename U=typename S::FlexType, unsigned N> \
-    inline static std::ptr##_ptr<_Type> Alloc##Ptr(const U(&init)[N]) { \
-        return std::ptr##_ptr<_Type>(new(N) _Type(N, init)); \
+    template<typename ...Args, typename U=typename S::FlexType> \
+    inline static std::ptr##_ptr<_Type> Alloc##Ptr( \
+            const std::initializer_list<U> &init, const Args(&... args)) { \
+        return std::ptr##_ptr<_Type>(new(init.size()) _Type(init.size(), args..., init)); \
     } \
     template<typename ...Args, typename U=typename S::FlexType> \
     inline static std::ptr##_ptr<_Type> Alloc##Ptr( \
-            const Args(&... args), const std::initializer_list<U> &init) { \
+            const std::vector<U> &init, const Args(&... args)) { \
         return std::ptr##_ptr<_Type>(new(init.size()) _Type(init.size(), args..., init)); \
+    } \
+    template<typename ...Args, typename U=typename S::FlexType, unsigned N> \
+    inline static std::ptr##_ptr<_Type> Alloc##Ptr(const U(&init)[N], const Args(&... args)) { \
+        return std::ptr##_ptr<_Type>(new(N) _Type(N, args..., init)); \
     } \
 
 /**
@@ -743,6 +749,22 @@ struct _C2ValueArrayHelper {
         }
     }
 
+    /// Initialize a flexible array using a vector.
+    template<typename T>
+    static void init(T(&array)[], size_t arrayLen, const std::vector<T> &init) {
+        size_t ix = 0;
+        // reserve last element for terminal 0 for strings
+        if (arrayLen && std::is_same<T, char>::value) {
+            --arrayLen;
+        }
+        for (const T &item : init) {
+            if (ix == arrayLen) {
+                break;
+            }
+            array[ix++] = item;
+        }
+    }
+
     /// Initialize a flexible array using another flexible array.
     template<typename T, unsigned N>
     static void init(T(&array)[], size_t arrayLen, const T(&str)[N]) {
@@ -751,7 +773,7 @@ struct _C2ValueArrayHelper {
             --arrayLen;
         }
         if (arrayLen) {
-            strncpy(array, str, std::min(arrayLen, (size_t)N));
+            memcpy(array, str, std::min(arrayLen, (size_t)N) * sizeof(T));
         }
     }
 };
@@ -780,6 +802,10 @@ private:
     }
 
     inline C2SimpleValueStruct(size_t flexCount, const std::initializer_list<T> &init) {
+        _C2ValueArrayHelper::init(value, flexCount, init);
+    }
+
+    inline C2SimpleValueStruct(size_t flexCount, const std::vector<T> &init) {
         _C2ValueArrayHelper::init(value, flexCount, init);
     }
 
@@ -820,6 +846,12 @@ private:
     /// Construct from an initializer list.
     /// Used only by the flexible parameter allocators (AllocUnique & AllocShared).
     inline C2SimpleArrayStruct(size_t flexCount, const std::initializer_list<T> &init) {
+        _C2ValueArrayHelper::init(values, flexCount, init);
+    }
+
+    /// Construct from an vector.
+    /// Used only by the flexible parameter allocators (AllocUnique & AllocShared).
+    inline C2SimpleArrayStruct(size_t flexCount, const std::vector<T> &init) {
         _C2ValueArrayHelper::init(values, flexCount, init);
     }
 

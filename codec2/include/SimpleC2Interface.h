@@ -22,6 +22,7 @@
 
 namespace android {
 
+// deprecated - use SimpleInterface
 class SimpleC2Interface : public C2ComponentInterface {
 public:
     class Builder {

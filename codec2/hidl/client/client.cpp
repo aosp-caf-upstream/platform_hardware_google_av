@@ -35,10 +35,11 @@
 #include <hidl/HidlSupport.h>
 #include <cutils/properties.h>
 
+#include <deque>
 #include <limits>
+#include <map>
 #include <type_traits>
 #include <vector>
-#include <map>
 
 namespace android {
 
@@ -68,6 +69,11 @@ typedef std::array<
         std::extent<decltype(kClientNames)>::value> ClientList;
 
 // Convenience methods to obtain known clients.
+size_t getClientCount() {
+    // TODO: this may not work if there is no default service
+    return std::extent<decltype(kClientNames)>::value;
+}
+
 std::shared_ptr<Codec2Client> getClient(size_t index) {
     return Codec2Client::CreateFromService(kClientNames[index]);
 }
@@ -329,8 +335,8 @@ Codec2Client::Base* Codec2Client::base() const {
     return static_cast<Base*>(mBase.get());
 }
 
-Codec2Client::Codec2Client(const sp<Codec2Client::Base>& base) :
-    Codec2ConfigurableClient(base), mListed(false) {
+Codec2Client::Codec2Client(const sp<Codec2Client::Base>& base, std::string instanceName) :
+    Codec2ConfigurableClient(base), mListed(false), mInstanceName(instanceName) {
     Return<sp<IClientManager>> transResult = base->getPoolClientManager();
     if (!transResult.isOk()) {
         ALOGE("getPoolClientManager -- failed transaction.");
@@ -614,7 +620,51 @@ std::shared_ptr<Codec2Client> Codec2Client::CreateFromService(
         }
         return nullptr;
     }
-    return std::make_shared<Codec2Client>(baseStore);
+    return std::make_shared<Codec2Client>(baseStore, instanceName);
+}
+
+c2_status_t Codec2Client::ForAllStores(
+        const std::string &key,
+        std::function<c2_status_t(const std::shared_ptr<Codec2Client>&)> predicate) {
+    c2_status_t status = C2_NO_INIT;  // no IComponentStores present
+
+    // Cache the mapping key -> index of Codec2Client in getClient().
+    static std::mutex key2IndexMutex;
+    static std::map<std::string, size_t> key2Index;
+
+    // By default try all stores. However, try the last known client first. If the last known
+    // client fails, retry once. We do this by pushing the last known client in front of the
+    // list of all clients.
+    std::deque<size_t> indices;
+    for (size_t index = getClientCount(); index > 0; ) {
+        indices.push_front(--index);
+    }
+
+    bool wasMapped = false;
+    std::unique_lock<std::mutex> lock(key2IndexMutex);
+    auto it = key2Index.find(key);
+    if (it != key2Index.end()) {
+        indices.push_front(it->second);
+        wasMapped = true;
+    }
+    lock.unlock();
+
+    for (size_t index : indices) {
+        std::shared_ptr<Codec2Client> client = getClient(index);
+        if (client) {
+            status = predicate(client);
+            if (status == C2_OK) {
+                lock.lock();
+                key2Index[key] = index; // update last known client index
+                return status;
+            }
+        }
+        if (wasMapped) {
+            ALOGI("Could not find '%s' in last instance. Retrying...", key.c_str());
+            wasMapped = false;
+        }
+    }
+    return status;  // return the last status from a valid client
 }
 
 std::shared_ptr<Codec2Client::Component>
@@ -622,68 +672,52 @@ std::shared_ptr<Codec2Client::Component>
         const char* componentName,
         const std::shared_ptr<Listener>& listener,
         std::shared_ptr<Codec2Client>* owner) {
-    c2_status_t status;
     std::shared_ptr<Component> component;
-
-    // Cache the mapping componentName -> index of Codec2Client in
-    // getClientList().
-    static std::mutex component2IndexMutex;
-    static std::map<std::string, size_t> component2Index;
-
-    component2IndexMutex.lock();
-    std::map<std::string, size_t>::const_iterator it =
-            component2Index.find(componentName);
-    if (it != component2Index.end()) {
-        std::shared_ptr<Codec2Client> client = getClient(it->second);
-        component2IndexMutex.unlock();
-        if (client) {
-            status = client->createComponent(
-                    componentName,
-                    listener,
-                    &component);
-            if (status == C2_OK) {
-                if (owner) {
-                    *owner = client;
+    c2_status_t status = ForAllStores(
+            componentName,
+            [owner, &component, componentName, &listener](
+                    const std::shared_ptr<Codec2Client> &client) -> c2_status_t {
+                c2_status_t status = client->createComponent(componentName, listener, &component);
+                if (status == C2_OK) {
+                    if (owner) {
+                        *owner = client;
+                    }
+                } else if (status != C2_NOT_FOUND) {
+                    ALOGD("IComponentStore(%s)::createComponent('%s') returned %s",
+                            client->getInstanceName().c_str(), componentName, asString(status));
                 }
-                return component;
-            }
-        }
-        ALOGW("IComponentStore instance that hosted component \"%s\" "
-                "failed to create the component. Retrying...", componentName);
-    } else {
-        component2IndexMutex.unlock();
+                return status;
+            });
+    if (status != C2_OK) {
+        ALOGI("Could not create component '%s' (%s)", componentName, asString(status));
     }
+    return component;
+}
 
-    size_t index = 0;
-    for (const std::shared_ptr<Codec2Client>& client : getClientList()) {
-        if (!client) {
-            ++index;
-            continue;
-        }
-        status = client->createComponent(
-                componentName,
-                listener,
-                &component);
-        if (status == C2_OK) {
-            component2IndexMutex.lock();
-            component2Index[componentName] = index;
-            component2IndexMutex.unlock();
-            if (owner) {
-                *owner = client;
-            }
-            return component;
-        } else if (status != C2_NOT_FOUND) {
-            ALOGE("CreateComponentByName -- failed to create component \"%s\": "
-                    " error code = %d.",
-                    componentName, static_cast<int>(status));
-            return nullptr;
-        }
-        ++index;
+std::shared_ptr<Codec2Client::Interface>
+        Codec2Client::CreateInterfaceByName(
+        const char* interfaceName,
+        std::shared_ptr<Codec2Client>* owner) {
+    std::shared_ptr<Interface> interface;
+    c2_status_t status = ForAllStores(
+            interfaceName,
+            [owner, &interface, interfaceName](
+                    const std::shared_ptr<Codec2Client> &client) -> c2_status_t {
+                c2_status_t status = client->createInterface(interfaceName, &interface);
+                if (status == C2_OK) {
+                    if (owner) {
+                        *owner = client;
+                    }
+                } else if (status != C2_NOT_FOUND) {
+                    ALOGD("IComponentStore(%s)::createInterface('%s') returned %s",
+                            client->getInstanceName().c_str(), interfaceName, asString(status));
+                }
+                return status;
+            });
+    if (status != C2_OK) {
+        ALOGI("Could not create interface '%s' (%s)", interfaceName, asString(status));
     }
-
-    ALOGW("CreateComponentByName -- component \"%s\" not found.",
-            componentName);
-    return nullptr;
+    return interface;
 }
 
 const std::vector<C2Component::Traits>& Codec2Client::ListComponents() {

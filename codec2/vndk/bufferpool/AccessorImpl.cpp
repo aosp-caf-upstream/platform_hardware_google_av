@@ -301,6 +301,7 @@ bool Accessor::Impl::BufferPool::handleTransferResult(const BufferStatusMessage 
                 && bufferIter->second->mTransactionCount == 0) {
                 mFreeBuffers.insert(message.bufferId);
             }
+            mTransactions.erase(found);
         }
         ALOGV("transfer finished %llu %u - %d", (unsigned long long)message.transactionId,
               message.bufferId, deleted);
