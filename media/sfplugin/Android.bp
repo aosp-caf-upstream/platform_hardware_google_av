@@ -10,6 +10,7 @@ cc_library_shared {
         "Codec2Buffer.cpp",
         "Codec2InfoBuilder.cpp",
         "ReflectedParamUpdater.cpp",
+        "SkipCutBuffer.cpp",
     ],
 
     cflags: [

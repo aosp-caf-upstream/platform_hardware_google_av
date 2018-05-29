@@ -299,12 +299,25 @@ public:
 
         switch(allocatorId) {
             case C2PlatformAllocatorStore::ION:
+            case C2AllocatorStore::DEFAULT_LINEAR:
                 res = allocatorStore->fetchAllocator(
                         C2AllocatorStore::DEFAULT_LINEAR, &allocator);
                 if (res == C2_OK) {
                     std::shared_ptr<C2BlockPool> ptr =
                             std::make_shared<C2PooledBlockPool>(
                                     allocator, poolId);
+                    *pool = ptr;
+                    mBlockPools[poolId] = ptr;
+                    mComponents[poolId] = component;
+                }
+                break;
+            case C2PlatformAllocatorStore::GRALLOC:
+            case C2AllocatorStore::DEFAULT_GRAPHIC:
+                res = allocatorStore->fetchAllocator(
+                        C2AllocatorStore::DEFAULT_GRAPHIC, &allocator);
+                if (res == C2_OK) {
+                    std::shared_ptr<C2BlockPool> ptr =
+                        std::make_shared<C2PooledBlockPool>(allocator, poolId);
                     *pool = ptr;
                     mBlockPools[poolId] = ptr;
                     mComponents[poolId] = component;
@@ -775,6 +788,7 @@ C2PlatformComponentStore::C2PlatformComponentStore()
     mComponents.emplace("c2.android.flac.decoder", "libstagefright_soft_c2flacdec.so");
     mComponents.emplace("c2.android.flac.encoder", "libstagefright_soft_c2flacenc.so");
     mComponents.emplace("c2.android.gsm.decoder", "libstagefright_soft_c2gsmdec.so");
+    mComponents.emplace("c2.android.xaac.decoder", "libstagefright_soft_c2xaacdec.so");
 }
 
 c2_status_t C2PlatformComponentStore::copyBuffer(

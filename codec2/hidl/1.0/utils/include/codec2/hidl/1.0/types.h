@@ -18,7 +18,6 @@
 #define HARDWARE_GOOGLE_MEDIA_C2_V1_0_UTILS_TYPES_H
 
 #include <bufferpool/ClientManager.h>
-#include <android/hardware/media/bufferpool/1.0/IAccessor.h>
 #include <android/hardware/media/bufferpool/1.0/IClientManager.h>
 #include <android/hardware/media/bufferpool/1.0/types.h>
 #include <hardware/google/media/c2/1.0/IComponentStore.h>
@@ -166,8 +165,6 @@ struct DefaultBufferPoolSender : BufferPoolSender {
             ClientManager ClientManager;
     typedef ::android::hardware::media::bufferpool::V1_0::
             IClientManager IClientManager;
-    typedef ::android::hardware::media::bufferpool::V1_0::
-            IAccessor IAccessor;
 
     // Set the IClientManager of the receiving process to receiverManager.
     DefaultBufferPoolSender(const sp<IClientManager>& receiverManager = nullptr);
@@ -187,7 +184,7 @@ private:
     sp<ClientManager> mSenderManager;
     sp<IClientManager> mReceiverManager;
     int64_t mReceiverConnectionId;
-    sp<IAccessor> mSourceAccessor;
+    int64_t mSourceConnectionId;
 };
 
 // std::list<std::unique_ptr<C2Work>> -> WorkBundle

@@ -27,7 +27,7 @@
 #include <C2V4l2Support.h>
 #include <Codec2Mapper.h>
 
-#include <cutils/properties.h>
+#include <android-base/properties.h>
 #include <media/stagefright/MediaCodecConstants.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 #include <media/stagefright/xmlparser/MediaCodecsXmlParser.h>
@@ -38,19 +38,45 @@ namespace android {
 
 using Traits = C2Component::Traits;
 
+namespace /* unnamed */ {
+
+bool hasPrefix(const std::string& s, const char* prefix) {
+    size_t prefixLen = strlen(prefix);
+    return s.compare(0, prefixLen, prefix) == 0;
+}
+
+bool hasSuffix(const std::string& s, const char* suffix) {
+    size_t suffixLen = strlen(suffix);
+    return suffixLen > s.size() ? false :
+            s.compare(s.size() - suffixLen, suffixLen, suffix) == 0;
+}
+
+} // unnamed namespace
+
 status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
     // TODO: Remove run-time configurations once all codecs are working
     // properly. (Assume "full" behavior eventually.)
     //
-    // debug.stagefright.ccodec supports 2 values.
-    //   "0" - Only OMX components are available.
-    //   "1" - Codec2.0 software audio decoders are available and preferred over
-    //         OMX software audio decoders.
-    //         c2.qti.avc.decoder and c2.qti.avc.encoder are available, but
-    //         ranked after OMX components.
+    // debug.stagefright.ccodec supports 5 values.
+    //   0 - Only OMX components are available.
+    //   1 - Codec2.0 software audio decoders are available and ranked 1st.
+    //       Components with "c2.vda." prefix are available with their normal
+    //       ranks.
+    //       Other components with ".avc.decoder" or ".avc.encoder" suffix are
+    //       available, but ranked last.
+    //   2 - All Codec2.0 components are available.
+    //       Codec2.0 software audio decoders are ranked 1st.
+    //       The other Codec2.0 components have their normal ranks.
+    //   3 - All Codec2.0 components are available.
+    //       Codec2.0 software components are ranked 1st.
+    //       The other Codec2.0 components have their normal ranks.
+    //   4 - All Codec2.0 components are available with their normal ranks.
     //
-    // The default value (boot time) is "1".
-    int option = property_get_bool("debug.stagefright.ccodec", 1);
+    // The default value (boot time) is 1.
+    //
+    // Note: Currently, OMX components have default rank 0x100, while all
+    // Codec2.0 software components have default rank 0x200.
+    int option = ::android::base::GetIntProperty("debug.stagefright.ccodec", 1);
 
     // Obtain Codec2Client
     std::vector<Traits> traits = Codec2Client::ListComponents();
@@ -74,17 +100,32 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
         case 0:
             continue;
         case 1:
-            if (trait.name.compare("c2.qti.avc.decoder") == 0 ||
-                    trait.name.compare("c2.qti.avc.encoder") == 0) {
-                rank = 0x10000;
-            } else if (trait.name.compare(0, 11, "c2.android.") != 0) {
-                continue;
-            } else if (trait.domain == C2Component::DOMAIN_AUDIO &&
-                    trait.kind == C2Component::KIND_DECODER) {
-                rank = 0x10000; // TODO: change this to 1;
-            } else {
+            if (hasPrefix(trait.name, "c2.vda.")) {
+                break;
+            }
+            if (hasPrefix(trait.name, "c2.android.")) {
+                if (trait.domain == C2Component::DOMAIN_AUDIO &&
+                        trait.kind == C2Component::KIND_DECODER) {
+                    rank = 0x10000; // TODO: change this to 1;
+                    break;
+                }
                 continue;
             }
+            if (hasSuffix(trait.name, ".avc.decoder") ||
+                    hasSuffix(trait.name, ".avc.encoder")) {
+                rank = std::numeric_limits<decltype(rank)>::max();
+                break;
+            }
+            continue;
+        case 2:
+            if (trait.domain == C2Component::DOMAIN_AUDIO &&
+                    trait.kind == C2Component::KIND_DECODER) {
+        case 3:
+                if (hasPrefix(trait.name, "c2.android.")) {
+                    rank = 1;
+                }
+            }
+            break;
         }
 
         const MediaCodecsXmlParser::CodecProperties &codec = parser.getCodecMap().at(trait.name);

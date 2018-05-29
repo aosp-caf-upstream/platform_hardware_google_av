@@ -1,5 +1,6 @@
 cc_binary {
     name: "codec2",
+    defaults: ["libstagefright_codec2-impl-defaults"],
 
     srcs: [
         "codec2.cpp",
@@ -9,14 +10,13 @@ cc_binary {
     ],
 
     shared_libs: [
+        "libbase",
         "libbinder",
         "libcutils",
         "libgui",
         "liblog",
         "libmediaextractor",
         "libstagefright",
-        "libstagefright_codec2",
-        "libstagefright_codec2_vndk",
         "libstagefright_foundation",
         "libui",
         "libutils",
