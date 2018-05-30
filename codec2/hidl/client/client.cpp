@@ -783,9 +783,7 @@ c2_status_t Codec2Client::Component::createBlockPool(
                     return;
                 }
                 *blockPoolId = static_cast<C2BlockPool::local_id_t>(pId);
-                if (c) {  // TODO: configurable returned should not be nullptr
-                    *configurable = std::make_shared<Codec2Client::Configurable>(c);
-                }
+                *configurable = std::make_shared<Codec2Client::Configurable>(c);
             });
     if (!transStatus.isOk()) {
         ALOGE("createBlockPool -- transaction failed.");

@@ -861,14 +861,13 @@ Status objcpy(FrameData* d, const C2FrameData& s,
 
 DefaultBufferPoolSender::DefaultBufferPoolSender(
         const sp<IClientManager>& receiverManager) :
-    mReceiverManager(receiverManager) {
+    mReceiverManager(receiverManager), mSourceConnectionId(0) {
 }
 
 void DefaultBufferPoolSender::setReceiver(const sp<IClientManager>& receiverManager) {
     std::lock_guard<std::mutex> lock(mMutex);
     if (mReceiverManager != receiverManager) {
         mReceiverManager = receiverManager;
-        mSourceAccessor = nullptr;
     }
 }
 
@@ -879,39 +878,30 @@ ResultStatus DefaultBufferPoolSender::send(
         ALOGE("No access to receiver's BufferPool.");
         return ResultStatus::NOT_FOUND;
     }
-
     ResultStatus rs;
     std::lock_guard<std::mutex> lock(mMutex);
-    sp<IAccessor> sourceAccessor = bpData->mAccessor.promote();
-    if (!mSourceAccessor || mSourceAccessor != sourceAccessor) {
-        // Initialize the bufferpool connection.
-        mSourceAccessor = sourceAccessor;
-        if (!mSourceAccessor) {
-            return ResultStatus::CRITICAL_ERROR;
-        }
-        Return<void> transResult = mReceiverManager->registerSender(
-                mSourceAccessor,
-                [&rs, this](
-                        ResultStatus status,
-                        int64_t connectionId) {
-                    rs = status;
-                    mReceiverConnectionId = connectionId;
-                });
-        if (!transResult.isOk()) {
-            ALOGE("registerSender -- failed transaction.");
-            mReceiverManager = nullptr;
-            return ResultStatus::CRITICAL_ERROR;
-        }
-        if ((rs != ResultStatus::OK) && (rs != ResultStatus::ALREADY_EXISTS)) {
-            ALOGW("registerSender -- returned error: %d.",
-                    static_cast<int>(rs));
-        }
-    }
     if (!mSenderManager) {
         mSenderManager = ClientManager::getInstance();
         if (!mSenderManager) {
             ALOGE("Failed to retrieve local BufferPool ClientManager.");
             return ResultStatus::CRITICAL_ERROR;
+        }
+    }
+    int64_t connectionId = bpData->mConnectionId;
+    if (mSourceConnectionId == 0 || mSourceConnectionId != connectionId) {
+        // Initialize the bufferpool connection.
+        mSourceConnectionId = connectionId;
+        if (mSourceConnectionId == 0) {
+            return ResultStatus::CRITICAL_ERROR;
+        }
+        int64_t receiverConnectionId;
+        rs = mSenderManager->registerSender(mReceiverManager, connectionId, &receiverConnectionId);
+        if ((rs != ResultStatus::OK) && (rs != ResultStatus::ALREADY_EXISTS)) {
+            ALOGW("registerSender -- returned error: %d.",
+                    static_cast<int>(rs));
+            return rs;
+        } else {
+            mReceiverConnectionId = receiverConnectionId;
         }
     }
 

@@ -88,6 +88,12 @@ ResultStatus Accessor::close(ConnectionId connectionId) {
     return ResultStatus::CRITICAL_ERROR;
 }
 
+void Accessor::cleanUp(bool clearCache) {
+    if (mImpl) {
+        mImpl->cleanUp(clearCache);
+    }
+}
+
 //IAccessor* HIDL_FETCH_IAccessor(const char* /* name */) {
 //    return new Accessor();
 //}

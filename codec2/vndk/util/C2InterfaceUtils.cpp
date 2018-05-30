@@ -255,7 +255,10 @@ template class C2SupportedFlags<uint64_t>;
  */
 template<typename T>
 bool C2SupportedValueSet<T>::contains(T value) const {
-    return std::find(_mValues.cbegin(), _mValues.cend(), C2Value::Primitive(value)) != _mValues.cend();
+    return std::find_if(_mValues.cbegin(), _mValues.cend(),
+            [value](const C2Value::Primitive &p) -> bool {
+                return value == p.ref<ValueType>();
+            }) != _mValues.cend();
 }
 
 template<typename T>

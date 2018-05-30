@@ -63,6 +63,24 @@ struct ClientManager : public IClientManager {
                         ConnectionId *pConnectionId);
 
     /**
+     * Register a created connection as sender for remote process.
+     *
+     * @param receiver      The remote receiving process.
+     * @param senderId      A local connection which will send buffers to.
+     * @param receiverId    Id of the created receiving connection on the receiver
+     *                      process.
+     *
+     * @return OK when the receiving connection is successfully created on the
+     *         receiver process.
+     *         NOT_FOUND when the sender connection was not found.
+     *         ALREADY_EXISTS the receiving connection is already made.
+     *         CRITICAL_ERROR otherwise.
+     */
+    ResultStatus registerSender(const sp<IClientManager> &receiver,
+                                ConnectionId senderId,
+                                ConnectionId *receiverId);
+
+    /**
      * Closes the specified connection.
      *
      * @param connectionId  The id of the connection.
@@ -134,16 +152,10 @@ struct ClientManager : public IClientManager {
                           TransactionId *transactionId,
                           int64_t *timestampUs);
 
-    /** Gets a buffer pool for the specified connection.
-     *
-     * @param connectionId  The id of the connection.
-     * @param accessor      The buffer pool for the specified connection.
-     * @return OK when a buffer pool was found for the connection.
-     *         NOT_FOUND when the specified connection was not found.
-     *         CRITICAL_ERROR otherwise.
+    /**
+     *  Time out inactive lingering connections and close.
      */
-    ResultStatus getAccessor(ConnectionId connectionId,
-                             sp<IAccessor> *accessor);
+    void cleanUp();
 
     /** Destructs the manager of buffer pool clients.  */
     ~ClientManager();

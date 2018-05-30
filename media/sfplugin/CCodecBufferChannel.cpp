@@ -43,6 +43,7 @@
 
 #include "CCodecBufferChannel.h"
 #include "Codec2Buffer.h"
+#include "SkipCutBuffer.h"
 
 namespace android {
 
@@ -186,7 +187,68 @@ public:
      */
     virtual std::unique_ptr<OutputBuffers> toArrayMode() = 0;
 
+    /**
+     * Initialize SkipCutBuffer object.
+     */
+    void initSkipCutBuffer(
+            int32_t delay, int32_t padding, int32_t sampleRate, int32_t channelCount) {
+        CHECK(mSkipCutBuffer == nullptr);
+        mDelay = delay;
+        mPadding = padding;
+        mSampleRate = sampleRate;
+        setSkipCutBuffer(delay, padding, channelCount);
+    }
+
+    /**
+     * Update the SkipCutBuffer object. No-op if it's never initialized.
+     */
+    void updateSkipCutBuffer(int32_t sampleRate, int32_t channelCount) {
+        if (mSkipCutBuffer == nullptr) {
+            return;
+        }
+        int32_t delay = mDelay;
+        int32_t padding = mPadding;
+        if (sampleRate != mSampleRate) {
+            delay = ((int64_t)delay * sampleRate) / mSampleRate;
+            padding = ((int64_t)padding * sampleRate) / mSampleRate;
+        }
+        setSkipCutBuffer(delay, padding, channelCount);
+    }
+
+    /**
+     * Submit buffer to SkipCutBuffer object, if initialized.
+     */
+    void submit(const sp<MediaCodecBuffer> &buffer) {
+        if (mSkipCutBuffer != nullptr) {
+            mSkipCutBuffer->submit(buffer);
+        }
+    }
+
+    /**
+     * Transfer SkipCutBuffer object to the other Buffers object.
+     */
+    void transferSkipCutBuffer(const sp<SkipCutBuffer> &scb) {
+        mSkipCutBuffer = scb;
+    }
+
+protected:
+    sp<SkipCutBuffer> mSkipCutBuffer;
+
 private:
+    int32_t mDelay;
+    int32_t mPadding;
+    int32_t mSampleRate;
+
+    void setSkipCutBuffer(int32_t skip, int32_t cut, int32_t channelCount) {
+        if (mSkipCutBuffer != nullptr) {
+            size_t prevSize = mSkipCutBuffer->size();
+            if (prevSize != 0u) {
+                ALOGD("Replacing SkipCutBuffer holding %zu bytes", prevSize);
+            }
+        }
+        mSkipCutBuffer = new SkipCutBuffer(skip, cut, channelCount);
+    }
+
     DISALLOW_EVIL_CONSTRUCTORS(OutputBuffers);
 };
 
@@ -889,6 +951,7 @@ public:
             ALOGD("copy buffer failed");
             return false;
         }
+        submit(c2Buffer);
         *clientBuffer = c2Buffer;
         return true;
     }
@@ -921,8 +984,11 @@ public:
     }
 
     void flush(const std::list<std::unique_ptr<C2Work>> &flushedWork) override {
-        (void) flushedWork;
+        (void)flushedWork;
         mImpl.flush();
+        if (mSkipCutBuffer != nullptr) {
+            mSkipCutBuffer->clear();
+        }
     }
 
     void getArray(Vector<sp<MediaCodecBuffer>> *array) const final {
@@ -974,6 +1040,7 @@ public:
     std::unique_ptr<CCodecBufferChannel::OutputBuffers> toArrayMode() override {
         std::unique_ptr<OutputBuffersArray> array(new OutputBuffersArray);
         array->setFormat(mFormat);
+        array->transferSkipCutBuffer(mSkipCutBuffer);
         array->initialize(
                 mImpl,
                 kMinOutputBufferArraySize,
@@ -1006,6 +1073,14 @@ class LinearOutputBuffers : public FlexOutputBuffers {
 public:
     using FlexOutputBuffers::FlexOutputBuffers;
 
+    void flush(
+            const std::list<std::unique_ptr<C2Work>> &flushedWork) override {
+        if (mSkipCutBuffer != nullptr) {
+            mSkipCutBuffer->clear();
+        }
+        FlexOutputBuffers::flush(flushedWork);
+    }
+
     sp<Codec2Buffer> wrap(const std::shared_ptr<C2Buffer> &buffer) override {
         if (buffer == nullptr) {
             return new DummyContainerBuffer(mFormat, buffer);
@@ -1018,7 +1093,9 @@ public:
             // We expect one and only one linear block from the component.
             return nullptr;
         }
-        return ConstLinearBlockBuffer::Allocate(mFormat, buffer);
+        sp<Codec2Buffer> clientBuffer = ConstLinearBlockBuffer::Allocate(mFormat, buffer);
+        submit(clientBuffer);
+        return clientBuffer;
     }
 
     sp<Codec2Buffer> allocateArrayBuffer() override {
@@ -1836,6 +1913,27 @@ status_t CCodecBufferChannel::start(
                 mComponent->setOutputSurface(outputPoolId_, higbp);
             }
         }
+
+        if (oStreamFormat.value == C2FormatAudio) {
+            int32_t channelCount;
+            int32_t sampleRate;
+            if (outputFormat->findInt32(KEY_CHANNEL_COUNT, &channelCount)
+                    && outputFormat->findInt32(KEY_SAMPLE_RATE, &sampleRate)) {
+                int32_t delay = 0;
+                int32_t padding = 0;;
+                if (!outputFormat->findInt32("encoder-delay", &delay)) {
+                    delay = 0;
+                }
+                if (!outputFormat->findInt32("encoder-padding", &padding)) {
+                    padding = 0;
+                }
+                if (delay || padding) {
+                    // We need write access to the buffers..
+                    (*buffers) = (*buffers)->toArrayMode();
+                    (*buffers)->initSkipCutBuffer(delay, padding, sampleRate, channelCount);
+                }
+            }
+        }
     }
 
     mSync.start();
@@ -1944,6 +2042,17 @@ bool CCodecBufferChannel::handleWork(
         ALOGD("onWorkDone: output format changed to %s",
                 outputFormat->debugString().c_str());
         (*buffers)->setFormat(outputFormat);
+
+        AString mediaType;
+        if (outputFormat->findString(KEY_MIME, &mediaType)
+                && mediaType == MIMETYPE_AUDIO_RAW) {
+            int32_t channelCount;
+            int32_t sampleRate;
+            if (outputFormat->findInt32(KEY_CHANNEL_COUNT, &channelCount)
+                    && outputFormat->findInt32(KEY_SAMPLE_RATE, &sampleRate)) {
+                (*buffers)->updateSkipCutBuffer(sampleRate, channelCount);
+            }
+        }
     }
 
     int32_t flags = 0;

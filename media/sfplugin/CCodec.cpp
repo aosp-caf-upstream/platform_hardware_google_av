@@ -603,6 +603,17 @@ void CCodec::configure(const sp<AMessage> &msg) {
             }
         }
 
+        if ((config->mDomain & Config::IS_DECODER) && (config->mDomain & Config::IS_AUDIO)) {
+            int delay = 0;
+            if (msg->findInt32("encoder-delay", &delay)) {
+                config->mOutputFormat->setInt32("encoder-delay", delay);
+            }
+            int padding = 0;
+            if (msg->findInt32("encoder-padding", &padding)) {
+                config->mOutputFormat->setInt32("encoder-padding", padding);
+            }
+        }
+
         ALOGD("setup formats input: %s and output: %s",
                 config->mInputFormat->debugString().c_str(),
                 config->mOutputFormat->debugString().c_str());

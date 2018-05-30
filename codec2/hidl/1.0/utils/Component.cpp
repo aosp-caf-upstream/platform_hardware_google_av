@@ -265,6 +265,57 @@ Return<Status> Component::disconnectFromInputSurface() {
     return Status::OK;
 }
 
+namespace /* unnamed */ {
+
+struct BlockPoolIntf : public ConfigurableC2Intf {
+    BlockPoolIntf(const std::shared_ptr<C2BlockPool>& pool) :
+        ConfigurableC2Intf("C2BlockPool:" + std::to_string(pool->getLocalId())),
+        mPool(pool) {
+    }
+
+    virtual c2_status_t config(
+            const std::vector<C2Param*>& params,
+            c2_blocking_t mayBlock,
+            std::vector<std::unique_ptr<C2SettingResult>>* const failures
+            ) override {
+        (void)params;
+        (void)mayBlock;
+        (void)failures;
+        return C2_OK;
+    }
+
+    virtual c2_status_t query(
+            const std::vector<C2Param::Index>& indices,
+            c2_blocking_t mayBlock,
+            std::vector<std::unique_ptr<C2Param>>* const params
+            ) const override {
+        (void)indices;
+        (void)mayBlock;
+        (void)params;
+        return C2_OK;
+    }
+
+    virtual c2_status_t querySupportedParams(
+            std::vector<std::shared_ptr<C2ParamDescriptor>>* const params
+            ) const override {
+        (void)params;
+        return C2_OK;
+    }
+
+    virtual c2_status_t querySupportedValues(
+            std::vector<C2FieldSupportedValuesQuery>& fields,
+            c2_blocking_t mayBlock) const override {
+        (void)fields;
+        (void)mayBlock;
+        return C2_OK;
+    }
+
+protected:
+    std::shared_ptr<C2BlockPool> mPool;
+};
+
+} // unnamed namespace
+
 Return<void> Component::createBlockPool(
         uint32_t allocatorId,
         createBlockPool_cb _hidl_cb) {
@@ -286,7 +337,8 @@ Return<void> Component::createBlockPool(
 
     _hidl_cb(static_cast<Status>(status),
             blockPool ? blockPool->getLocalId() : 0,
-            nullptr /* configurable */);
+            new CachedConfigurable(
+            std::make_unique<BlockPoolIntf>(blockPool)));
     return Void();
 }
 

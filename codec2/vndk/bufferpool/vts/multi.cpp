@@ -41,7 +41,6 @@ using android::C2AllocatorIon;
 using android::C2PlatformAllocatorStore;
 using android::hardware::configureRpcThreadpool;
 using android::hardware::hidl_handle;
-using android::hardware::media::bufferpool::V1_0::IAccessor;
 using android::hardware::media::bufferpool::V1_0::IClientManager;
 using android::hardware::media::bufferpool::V1_0::ResultStatus;
 using android::hardware::media::bufferpool::V1_0::implementation::BufferId;
@@ -107,9 +106,6 @@ class BufferpoolMultiTest : public ::testing::Test {
     status = mManager->create(mAllocator, &mConnectionId);
     ASSERT_TRUE(status == ResultStatus::OK);
     mConnectionValid = true;
-
-    status = mManager->getAccessor(mConnectionId, &mAccessor);
-    ASSERT_TRUE(status == ResultStatus::OK && (bool)mAccessor);
   }
 
   virtual void TearDown() override {
@@ -130,7 +126,6 @@ class BufferpoolMultiTest : public ::testing::Test {
   }
 
   android::sp<ClientManager> mManager;
-  android::sp<IAccessor> mAccessor;
   std::shared_ptr<BufferPoolAllocator> mAllocator;
   bool mConnectionValid;
   ConnectionId mConnectionId;
@@ -196,12 +191,7 @@ TEST_F(BufferpoolMultiTest, TransferBuffer) {
   ConnectionId receiverId;
   ASSERT_TRUE((bool)receiver);
 
-  receiver->registerSender(
-      mAccessor, [&status, &receiverId]
-      (ResultStatus outStatus, ConnectionId outId) {
-        status = outStatus;
-        receiverId = outId;
-      });
+  status = mManager->registerSender(receiver, mConnectionId, &receiverId);
   ASSERT_TRUE(status == ResultStatus::OK);
   {
     native_handle_t *shandle = nullptr;

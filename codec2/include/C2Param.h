@@ -834,10 +834,6 @@ public:
 
         Primitive() : u64(0) { }
 
-        inline bool operator==(const Primitive &other) const {
-            return u64 == other.u64;
-        }
-
         /** gets value out of the union */
         template<typename T> const T &ref() const;
 
