@@ -1207,7 +1207,8 @@ CCodecBufferChannel::CCodecBufferChannel(
       mFrameIndex(0u),
       mFirstValidFrameIndex(0u),
       mOutputBufferQueue(new OutputBufferQueue()),
-      mMetaMode(MODE_NONE) {
+      mMetaMode(MODE_NONE),
+      mPendingFeed(0) {
 }
 
 CCodecBufferChannel::~CCodecBufferChannel() {
@@ -1269,7 +1270,9 @@ status_t CCodecBufferChannel::queueInputBufferInternal(const sp<MediaCodecBuffer
 
     std::list<std::unique_ptr<C2Work>> items;
     items.push_back(std::move(work));
-    return mComponent->queue(&items);
+    c2_status_t err = mComponent->queue(&items);
+    feedInputBufferIfAvailableInternal();
+    return err;
 }
 
 status_t CCodecBufferChannel::queueInputBuffer(const sp<MediaCodecBuffer> &buffer) {
@@ -1377,23 +1380,32 @@ void CCodecBufferChannel::feedInputBufferIfAvailable() {
         ALOGV("We're not running --- no input buffer reported");
         return;
     }
-    sp<MediaCodecBuffer> inBuffer;
-    size_t index;
-    {
-        Mutexed<std::unique_ptr<InputBuffers>>::Locked buffers(mInputBuffers);
-        if (!(*buffers)->requestNewBuffer(&index, &inBuffer)) {
-            ALOGV("no new buffer available");
-            inBuffer = nullptr;
-            return;
+    feedInputBufferIfAvailableInternal();
+}
+
+void CCodecBufferChannel::feedInputBufferIfAvailableInternal() {
+    while (mPendingFeed > 0) {
+        sp<MediaCodecBuffer> inBuffer;
+        size_t index;
+        {
+            Mutexed<std::unique_ptr<InputBuffers>>::Locked buffers(mInputBuffers);
+            if (!(*buffers)->requestNewBuffer(&index, &inBuffer)) {
+                ALOGV("no new buffer available");
+                break;
+            }
         }
+        ALOGV("new input index = %zu", index);
+        mCallback->onInputBufferAvailable(index, inBuffer);
+        ALOGV("%s: pending feed -1 from %u", __func__, mPendingFeed.load());
+        --mPendingFeed;
     }
-    ALOGV("new input index = %zu", index);
-    mCallback->onInputBufferAvailable(index, inBuffer);
 }
 
 status_t CCodecBufferChannel::renderOutputBuffer(
         const sp<MediaCodecBuffer> &buffer, int64_t timestampNs) {
     ALOGV("renderOutputBuffer");
+    ALOGV("%s: pending feed +1 from %u", __func__, mPendingFeed.load());
+    ++mPendingFeed;
     feedInputBufferIfAvailable();
 
     std::shared_ptr<C2Buffer> c2Buffer;
@@ -1666,11 +1678,11 @@ status_t CCodecBufferChannel::discardBuffer(const sp<MediaCodecBuffer> &buffer) 
         Mutexed<std::unique_ptr<OutputBuffers>>::Locked buffers(mOutputBuffers);
         if (*buffers && (*buffers)->releaseBuffer(buffer, nullptr)) {
             released = true;
-            buffers.unlock();
-            feedInputBufferIfAvailable();
-            buffers.lock();
+            ALOGV("%s: pending feed +1 from %u", __func__, mPendingFeed.load());
+            ++mPendingFeed;
         }
     }
+    feedInputBufferIfAvailable();
     if (!released) {
         ALOGD("MediaCodec discarded an unknown buffer");
     }
@@ -1988,10 +2000,11 @@ void CCodecBufferChannel::flush(const std::list<std::unique_ptr<C2Work>> &flushe
 void CCodecBufferChannel::onWorkDone(
         std::unique_ptr<C2Work> work, const sp<AMessage> &outputFormat,
         const C2StreamInitDataInfo::output *initData) {
-    bool feedNeeded = handleWork(std::move(work), outputFormat, initData);
-    if (feedNeeded) {
-        feedInputBufferIfAvailable();
+    if (handleWork(std::move(work), outputFormat, initData)) {
+        ALOGV("%s: pending feed +1 from %u", __func__, mPendingFeed.load());
+        ++mPendingFeed;
     }
+    feedInputBufferIfAvailable();
 }
 
 bool CCodecBufferChannel::handleWork(

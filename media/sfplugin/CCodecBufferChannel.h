@@ -184,6 +184,7 @@ private:
     };
 
     void feedInputBufferIfAvailable();
+    void feedInputBufferIfAvailableInternal();
     status_t queueInputBufferInternal(const sp<MediaCodecBuffer> &buffer);
     bool handleWork(
             std::unique_ptr<C2Work> work, const sp<AMessage> &outputFormat,
@@ -226,6 +227,7 @@ private:
     std::shared_ptr<InputSurfaceWrapper> mInputSurface;
 
     MetaMode mMetaMode;
+    std::atomic_int32_t mPendingFeed;
 
     inline bool hasCryptoOrDescrambler() {
         return mCrypto != NULL || mDescrambler != NULL;

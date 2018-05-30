@@ -73,8 +73,8 @@ public:
                 DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_SETTING)
                 .withDefault(new C2VideoSizeStreamTuning::input(0u, 320, 240))
                 .withFields({
-                    C2F(mSize, width).inRange(2, 4080, 2),
-                    C2F(mSize, height).inRange(2, 4080, 2),
+                    C2F(mSize, width).inRange(2, 2560, 2),
+                    C2F(mSize, height).inRange(2, 2560, 2),
                 })
                 .withSetter(SizeSetter)
                 .build());
@@ -98,8 +98,14 @@ public:
     static C2R SizeSetter(bool mayBlock, C2P<C2VideoSizeStreamTuning::input> &me) {
         (void)mayBlock;
         // TODO: maybe apply block limit?
-        return me.F(me.v.width).validatePossible(me.v.width).plus(
-                me.F(me.v.height).validatePossible(me.v.height));
+        C2R res = C2R::Ok();
+        if (!me.F(me.v.width).supportsAtAll(me.v.width)) {
+            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.width)));
+        }
+        if (!me.F(me.v.height).supportsAtAll(me.v.height)) {
+            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.height)));
+        }
+        return res;
     }
 
     uint32_t getWidth() const { return mSize->width; }

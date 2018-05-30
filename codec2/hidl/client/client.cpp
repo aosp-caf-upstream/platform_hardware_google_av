@@ -222,9 +222,8 @@ c2_status_t Codec2ConfigurableClient::config(
                     const Params& o) {
                 status = static_cast<c2_status_t>(s);
                 if (status != C2_OK) {
-                    ALOGE("config -- call failed. "
+                    ALOGD("config -- call failed. "
                             "Error code = %d", static_cast<int>(status));
-                    return;
                 }
                 size_t i = failures->size();
                 failures->resize(i + f.size());
