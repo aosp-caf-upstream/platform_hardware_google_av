@@ -173,6 +173,7 @@ status_t C2SoftVorbisDec::initDecoder() {
 }
 
 c2_status_t C2SoftVorbisDec::onFlush_sm() {
+    mInputBufferCount = 0;
     mNumFramesLeftOnPage = -1;
     mSignalledOutputEos = false;
     if (mState) vorbis_dsp_restart(mState);

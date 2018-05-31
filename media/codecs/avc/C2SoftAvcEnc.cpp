@@ -1166,11 +1166,16 @@ void C2SoftAvcEnc::process(
     //         }
     //     }
     // }
-    const C2GraphicView view =
-        work->input.buffers[0]->data().graphicBlocks().front().map().get();
-    if (view.error() != C2_OK) {
-        ALOGE("graphic view map err = %d", view.error());
-        return;
+    std::shared_ptr<const C2GraphicView> view;
+    std::shared_ptr<C2Buffer> inputBuffer;
+    if (!work->input.buffers.empty()) {
+        inputBuffer = work->input.buffers[0];
+        view = std::make_shared<const C2GraphicView>(
+                inputBuffer->data().graphicBlocks().front().map().get());
+        if (view->error() != C2_OK) {
+            ALOGE("graphic view map err = %d", view->error());
+            return;
+        }
     }
 
     std::shared_ptr<C2LinearBlock> block;
@@ -1194,7 +1199,7 @@ void C2SoftAvcEnc::process(
         }
 
         error = setEncodeArgs(
-                &s_encode_ip, &s_encode_op, &view, wView.base(), wView.capacity(), timestamp);
+                &s_encode_ip, &s_encode_op, view.get(), wView.base(), wView.capacity(), timestamp);
         if (error != C2_OK) {
             mSignalledError = true;
             ALOGE("setEncodeArgs failed : %d", error);
@@ -1229,7 +1234,9 @@ void C2SoftAvcEnc::process(
     } while (IV_SUCCESS != status);
 
     // Hold input buffer reference
-    mBuffers[s_encode_ip.s_inp_buf.apv_bufs[0]] = work->input.buffers[0];
+    if (inputBuffer) {
+        mBuffers[s_encode_ip.s_inp_buf.apv_bufs[0]] = inputBuffer;
+    }
 
     GETTIME(&mTimeEnd, NULL);
     /* Compute time taken for decode() */
