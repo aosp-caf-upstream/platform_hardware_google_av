@@ -964,6 +964,17 @@ status_t CCodecConfig::setParameters(
         ALOGD("config failed => %s", asString(err));
         // This is non-fatal.
     }
+    for (const std::unique_ptr<C2SettingResult> &failure : failures) {
+        switch (failure->failure) {
+            case C2SettingResult::BAD_VALUE:
+                ALOGD("Bad parameter value");
+                result = BAD_VALUE;
+                break;
+            default:
+                ALOGV("failure = %d", int(failure->failure));
+                break;
+        }
+    }
 
     // Re-query parameter values in case config could not update them and update the current
     // configuration.

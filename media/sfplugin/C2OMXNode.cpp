@@ -228,9 +228,7 @@ status_t C2OMXNode::emptyBuffer(
             return UNKNOWN_ERROR;
         }
         block = _C2BlockFactory::CreateGraphicBlock(alloc);
-    } else if (flags & OMX_BUFFERFLAG_EOS) {
-        return comp->drain(C2Component::DRAIN_COMPONENT_WITH_EOS);
-    } else {
+    } else if (!(flags & OMX_BUFFERFLAG_EOS)) {
         return BAD_VALUE;
     }
 

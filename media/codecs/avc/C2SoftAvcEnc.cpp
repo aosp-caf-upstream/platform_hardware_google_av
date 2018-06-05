@@ -73,8 +73,8 @@ public:
                 DefineParam(mSize, C2_NAME_STREAM_VIDEO_SIZE_SETTING)
                 .withDefault(new C2VideoSizeStreamTuning::input(0u, 320, 240))
                 .withFields({
-                    C2F(mSize, width).inRange(2, 4080, 2),
-                    C2F(mSize, height).inRange(2, 4080, 2),
+                    C2F(mSize, width).inRange(2, 2560, 2),
+                    C2F(mSize, height).inRange(2, 2560, 2),
                 })
                 .withSetter(SizeSetter)
                 .build());
@@ -98,8 +98,14 @@ public:
     static C2R SizeSetter(bool mayBlock, C2P<C2VideoSizeStreamTuning::input> &me) {
         (void)mayBlock;
         // TODO: maybe apply block limit?
-        return me.F(me.v.width).validatePossible(me.v.width).plus(
-                me.F(me.v.height).validatePossible(me.v.height));
+        C2R res = C2R::Ok();
+        if (!me.F(me.v.width).supportsAtAll(me.v.width)) {
+            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.width)));
+        }
+        if (!me.F(me.v.height).supportsAtAll(me.v.height)) {
+            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.height)));
+        }
+        return res;
     }
 
     uint32_t getWidth() const { return mSize->width; }
@@ -1160,11 +1166,16 @@ void C2SoftAvcEnc::process(
     //         }
     //     }
     // }
-    const C2GraphicView view =
-        work->input.buffers[0]->data().graphicBlocks().front().map().get();
-    if (view.error() != C2_OK) {
-        ALOGE("graphic view map err = %d", view.error());
-        return;
+    std::shared_ptr<const C2GraphicView> view;
+    std::shared_ptr<C2Buffer> inputBuffer;
+    if (!work->input.buffers.empty()) {
+        inputBuffer = work->input.buffers[0];
+        view = std::make_shared<const C2GraphicView>(
+                inputBuffer->data().graphicBlocks().front().map().get());
+        if (view->error() != C2_OK) {
+            ALOGE("graphic view map err = %d", view->error());
+            return;
+        }
     }
 
     std::shared_ptr<C2LinearBlock> block;
@@ -1188,7 +1199,7 @@ void C2SoftAvcEnc::process(
         }
 
         error = setEncodeArgs(
-                &s_encode_ip, &s_encode_op, &view, wView.base(), wView.capacity(), timestamp);
+                &s_encode_ip, &s_encode_op, view.get(), wView.base(), wView.capacity(), timestamp);
         if (error != C2_OK) {
             mSignalledError = true;
             ALOGE("setEncodeArgs failed : %d", error);
@@ -1223,7 +1234,9 @@ void C2SoftAvcEnc::process(
     } while (IV_SUCCESS != status);
 
     // Hold input buffer reference
-    mBuffers[s_encode_ip.s_inp_buf.apv_bufs[0]] = work->input.buffers[0];
+    if (inputBuffer) {
+        mBuffers[s_encode_ip.s_inp_buf.apv_bufs[0]] = inputBuffer;
+    }
 
     GETTIME(&mTimeEnd, NULL);
     /* Compute time taken for decode() */

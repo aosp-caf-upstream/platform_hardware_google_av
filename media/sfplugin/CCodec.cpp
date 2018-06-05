@@ -517,7 +517,7 @@ void CCodec::configure(const sp<AMessage> &msg) {
         return;
     }
 
-    auto doConfig = [msg, comp, this] {
+    auto doConfig = [msg, comp, this]() -> status_t {
         AString mime;
         if (!msg->findString("mime", &mime)) {
             return BAD_VALUE;
@@ -560,6 +560,7 @@ void CCodec::configure(const sp<AMessage> &msg) {
         err = config->setParameters(comp, configUpdate, C2_DONT_BLOCK);
         if (err != OK) {
             ALOGW("failed to configure c2 params");
+            return err;
         }
 
         std::vector<std::unique_ptr<C2Param>> params;
@@ -839,6 +840,7 @@ void CCodec::initiateStop() {
         state->set(STOPPING);
     }
 
+    mChannel->stop();
     (new AMessage(kWhatStop, this))->post();
 }
 
@@ -860,7 +862,6 @@ void CCodec::stop() {
         }
         comp = state->comp;
     }
-    mChannel->stop();
     status_t err = comp->stop();
     if (err != C2_OK) {
         // TODO: convert err into status_t
@@ -901,6 +902,7 @@ void CCodec::initiateRelease(bool sendCallback /* = true */) {
         state->set(RELEASING);
     }
 
+    mChannel->stop();
     std::thread([this, sendCallback] { release(sendCallback); }).detach();
 }
 
@@ -918,7 +920,6 @@ void CCodec::release(bool sendCallback) {
         }
         comp = state->comp;
     }
-    mChannel->stop();
     comp->release();
 
     {
@@ -958,6 +959,7 @@ void CCodec::signalFlush() {
             return;
     }
 
+    mChannel->stop();
     (new AMessage(kWhatFlush, this))->post();
 }
 
@@ -974,8 +976,6 @@ void CCodec::flush() {
     if (tryAndReportOnError(checkFlushing) != OK) {
         return;
     }
-
-    mChannel->stop();
 
     std::list<std::unique_ptr<C2Work>> flushedWork;
     c2_status_t err = comp->flush(C2Component::FLUSH_COMPONENT, &flushedWork);

@@ -361,7 +361,9 @@ void SimpleC2Component::processQueue() {
             if (err != C2_OK) {
                 return err;
             }
-            int32_t poolMask = property_get_int32("debug.stagefright.c2-poolmask", 0);
+            int32_t poolMask = property_get_int32(
+                    "debug.stagefright.c2-poolmask",
+                    1 << C2PlatformAllocatorStore::ION);
 
             C2Allocator::id_t allocatorId =
                 (outputFormat.value == C2FormatVideo) ? C2PlatformAllocatorStore::BUFFERQUEUE
