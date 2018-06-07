@@ -47,6 +47,36 @@ public:
      * Ref: GraphicBufferSource::signalEndOfInputStream.
      */
     virtual status_t signalEndOfInputStream() = 0;
+
+    /// Input Surface configuration
+    struct Config {
+        // IN PARAMS (GBS)
+        float mMinFps; // minimum fps (repeat frame to achieve this)
+        float mMaxFps; // max fps (via frame drop)
+        float mCaptureFps; // capture fps
+        bool mSuspended; // suspended
+        int64_t mTimeOffsetUs; // time offset (input => codec)
+        int64_t mSuspendAtUs; // suspend/resume time
+        int64_t mStartAtUs; // start time
+        bool mStopped; // stopped
+        int64_t mStopAtUs; // stop time
+
+        // OUT PARAMS (GBS)
+        int64_t mInputDelayUs; // delay between encoder input and surface input
+
+        // IN PARAMS (CODEC WRAPPER)
+        float mFixedAdjustedFps; // fixed fps via PTS manipulation
+        float mMinAdjustedFps; // minimum fps via PTS manipulation
+    };
+
+    /**
+     * Configures input surface.
+     *
+     * \param config configuration. This can be updated during this call to provide output
+     *               parameters, but not to provide configured parameters (to avoid continually
+     *               reconfiguring)
+     */
+    virtual status_t configure(Config &config) = 0;
 };
 
 }  // namespace android

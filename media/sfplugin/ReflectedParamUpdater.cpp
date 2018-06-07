@@ -123,7 +123,7 @@ void ReflectedParamUpdater::addParamDesc(
             ALOGD("Could not describe %s", desc->name().c_str());
             continue;
         }
-        addParamDesc(desc, *structDesc);
+        addParamDesc(desc, *structDesc, reflector, true /* markVendor */);
     }
 
     // TEMP: also add vendor parameters as non-vendor
@@ -134,29 +134,34 @@ void ReflectedParamUpdater::addParamDesc(
         std::unique_ptr<C2StructDescriptor> structDesc = reflector->describe(
                 desc->index().coreIndex());
         if (structDesc) {
-            addParamDesc(desc, *structDesc, false);
+            addParamDesc(desc, *structDesc, reflector, false /* markVendor */);
         }
     }
 }
 
-void ReflectedParamUpdater::addParamDesc(
-        std::shared_ptr<C2ParamDescriptor> desc, const C2StructDescriptor &structDesc,
-        bool markVendor) {
-    C2String paramName = desc->name();
-
-    // prefix vendor parameters
-    if (desc->index().isVendor() && markVendor) {
-        paramName = "vendor." + paramName;
-    }
-    mParamNames.emplace(desc->index(), paramName);
-
+void ReflectedParamUpdater::addParamStructDesc(
+        std::shared_ptr<C2ParamDescriptor> desc,
+        C2String path,
+        size_t offset,
+        const C2StructDescriptor &structDesc,
+        const std::shared_ptr<C2ParamReflector> &reflector) {
     for (auto it = structDesc.begin(); it != structDesc.end(); ++it) {
+        C2String fieldName = path + "." + it->name();
         if (it->type() & C2FieldDescriptor::STRUCT_FLAG) {
-            // TODO: don't ignore
-            ALOGD("ignored struct field");
+            if (reflector == nullptr || it->extent() != 1) {
+                ALOGD("ignored struct field %s", fieldName.c_str());
+                continue;
+            }
+            std::unique_ptr<C2StructDescriptor> structDesc_ = reflector->describe(
+                    C2Param::CoreIndex(it->type()).coreIndex());
+            if (structDesc_ == nullptr) {
+                ALOGD("Could not describe structure of %s", fieldName.c_str());
+                continue;
+            }
+            addParamStructDesc(desc, fieldName, offset + _C2ParamInspector::GetOffset(*it),
+                               *structDesc_, reflector);
             continue;
         }
-        C2String fieldName = paramName + "." + it->name();
 
         // verify extent and type
         switch (it->type()) {
@@ -175,6 +180,7 @@ void ReflectedParamUpdater::addParamDesc(
             case C2FieldDescriptor::STRING:
             case C2FieldDescriptor::BLOB:
                 break;
+
             default:
                 ALOGD("Unrecognized type: %s", fieldName.c_str());
                 continue;
@@ -189,9 +195,23 @@ void ReflectedParamUpdater::addParamDesc(
                     it->type(), it->extent(), it->name(),
                     _C2ParamInspector::GetOffset(*it),
                     _C2ParamInspector::GetSize(*it)),
-            0,  // offset
+            offset,
         });
     }
+}
+
+void ReflectedParamUpdater::addParamDesc(
+        std::shared_ptr<C2ParamDescriptor> desc, const C2StructDescriptor &structDesc,
+        const std::shared_ptr<C2ParamReflector> &reflector, bool markVendor) {
+    C2String paramName = desc->name();
+
+    // prefix vendor parameters
+    if (desc->index().isVendor() && markVendor) {
+        paramName = "vendor." + paramName;
+    }
+    mParamNames.emplace(desc->index(), paramName);
+
+    addParamStructDesc(desc, paramName, 0 /* offset */, structDesc, reflector);
 }
 
 std::string ReflectedParamUpdater::getParamName(C2Param::Index index) const {

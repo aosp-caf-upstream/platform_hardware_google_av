@@ -30,7 +30,7 @@ namespace android {
 class SimpleC2Component
         : public C2Component, public std::enable_shared_from_this<SimpleC2Component> {
 public:
-    SimpleC2Component(
+    explicit SimpleC2Component(
             const std::shared_ptr<C2ComponentInterface> &intf);
     virtual ~SimpleC2Component() = default;
 
@@ -136,6 +136,8 @@ protected:
             const C2Rect &crop);
 
     static constexpr uint32_t NO_DRAIN = ~0u;
+
+    C2ReadView mDummyReadView;
 
 private:
     const std::shared_ptr<C2ComponentInterface> mIntf;

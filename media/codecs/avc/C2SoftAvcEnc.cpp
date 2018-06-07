@@ -1110,6 +1110,7 @@ void C2SoftAvcEnc::process(
         error = setEncodeArgs(
                 &s_encode_ip, &s_encode_op, NULL, header, kHeaderLength, timestamp);
         if (error != C2_OK) {
+            ALOGE("setEncodeArgs failed: %d", error);
             mSignalledError = true;
             work->workletsProcessed = 1u;
             work->result = C2_CORRUPTED;
@@ -1249,19 +1250,18 @@ void C2SoftAvcEnc::process(
     /* If encoder frees up an input buffer, mark it as free */
     if (freed != NULL) {
         if (mBuffers.count(freed) == 0u) {
-            work->workletsProcessed = 1u;
-            work->result = C2_CORRUPTED;
-            return;
-        }
-        // Release input buffer reference
-        mBuffers.erase(freed);
+            ALOGD("buffer not tracked");
+        } else {
+            // Release input buffer reference
+            mBuffers.erase(freed);
 
-        auto it = std::find_if(
-                mConversionBuffersInUse.begin(), mConversionBuffersInUse.end(),
-                [freed](const auto &elem) { return elem.get() == freed; });
-        if (it != mConversionBuffersInUse.end()) {
-            mFreeConversionBuffers.push_back(std::move(*it));
-            mConversionBuffersInUse.erase(it);
+            auto it = std::find_if(
+                    mConversionBuffersInUse.begin(), mConversionBuffersInUse.end(),
+                    [freed](const auto &elem) { return elem.get() == freed; });
+            if (it != mConversionBuffersInUse.end()) {
+                mFreeConversionBuffers.push_back(std::move(*it));
+                mConversionBuffersInUse.erase(it);
+            }
         }
     }
 

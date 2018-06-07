@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//#define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
 #define LOG_TAG "C2SoftAacEnc"
 #include <utils/Log.h>
 
@@ -294,16 +294,25 @@ void C2SoftAacEnc::process(
         mSentCodecSpecificData = true;
     }
 
-    C2ReadView view = work->input.buffers[0]->data().linearBlocks().front().map().get();
+    uint8_t temp[1];
+    C2ReadView view = mDummyReadView;
+    const uint8_t *data = temp;
+    size_t capacity = 0u;
+    if (!work->input.buffers.empty()) {
+        view = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        data = view.data();
+        capacity = view.capacity();
+    }
     uint64_t timestamp = mInputTimeUs.peeku();
 
-    size_t numFrames = (view.capacity() + mInputSize + (eos ? mNumBytesPerInputFrame - 1 : 0))
+    size_t numFrames = (capacity + mInputSize + (eos ? mNumBytesPerInputFrame - 1 : 0))
             / mNumBytesPerInputFrame;
-    ALOGV("capacity = %u; mInputSize = %zu; numFrames = %zu", view.capacity(), mInputSize, numFrames);
+    ALOGV("capacity = %u; mInputSize = %zu; numFrames = %zu mNumBytesPerInputFrame = %u",
+          capacity, mInputSize, numFrames, mNumBytesPerInputFrame);
 
     std::shared_ptr<C2LinearBlock> block;
     std::unique_ptr<C2WriteView> wView;
-    uint8_t *outPtr = nullptr;
+    uint8_t *outPtr = temp;
     size_t outAvailable = 0u;
 
     if (numFrames) {
@@ -323,11 +332,11 @@ void C2SoftAacEnc::process(
     AACENC_OutArgs outargs;
     memset(&inargs, 0, sizeof(inargs));
     memset(&outargs, 0, sizeof(outargs));
-    inargs.numInSamples = view.capacity() / sizeof(int16_t);
+    inargs.numInSamples = capacity / sizeof(int16_t);
 
-    void* inBuffer[]        = { (unsigned char *)view.data() };
+    void* inBuffer[]        = { (unsigned char *)data };
     INT   inBufferIds[]     = { IN_AUDIO_DATA };
-    INT   inBufferSize[]    = { (INT)view.capacity() };
+    INT   inBufferSize[]    = { (INT)capacity };
     INT   inBufferElSize[]  = { sizeof(int16_t) };
 
     AACENC_BufDesc inBufDesc;
@@ -368,7 +377,7 @@ void C2SoftAacEnc::process(
         if (encoderErr == AACENC_OK) {
             if (outargs.numOutBytes > 0) {
                 mInputSize = 0;
-                int consumed = ((view.capacity() / sizeof(int16_t)) - inargs.numInSamples);
+                int consumed = ((capacity / sizeof(int16_t)) - inargs.numInSamples);
                 mInputTimeUs = work->input.ordinal.timestamp
                         + (consumed * 1000000ll / channelCount / sampleRate);
             } else {
@@ -384,7 +393,8 @@ void C2SoftAacEnc::process(
                 inargs.numInSamples -= outargs.numInSamples;
             }
         }
-        ALOGV("nOutputBytes = %zu; inargs.numInSamples = %d", nOutputBytes, inargs.numInSamples);
+        ALOGV("encoderErr = %d nOutputBytes = %zu; mInputSize = %zu inargs.numInSamples = %d",
+              encoderErr, nOutputBytes, mInputSize, inargs.numInSamples);
     }
 
     if (eos && inBufferSize[0] > 0) {

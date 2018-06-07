@@ -44,6 +44,10 @@ public:
         return mValid;
     }
 
+    bool isLocal() {
+        return mValid && mLocal;
+    }
+
     ConnectionId getConnectionId() {
         return mConnectionId;
     }
@@ -235,12 +239,11 @@ public:
 };
 
 BufferPoolClient::Impl::Impl(const sp<Accessor> &accessor)
-    : mLocal(true), mAccessor(accessor), mSeqId(0),
+    : mLocal(true), mValid(false), mAccessor(accessor), mSeqId(0),
       mLastEvictCacheUs(getTimestampNow()) {
-    mValid = false;
     const QueueDescriptor *fmqDesc;
     ResultStatus status = accessor->connect(
-            &mLocalConnection, &mConnectionId, &fmqDesc);
+            &mLocalConnection, &mConnectionId, &fmqDesc, true);
     if (status == ResultStatus::OK) {
         mReleasing.mStatusChannel =
                 std::make_unique<BufferStatusChannel>(*fmqDesc);
@@ -250,15 +253,14 @@ BufferPoolClient::Impl::Impl(const sp<Accessor> &accessor)
 }
 
 BufferPoolClient::Impl::Impl(const sp<IAccessor> &accessor)
-    : mLocal(false), mAccessor(accessor), mSeqId(0),
+    : mLocal(false), mValid(false), mAccessor(accessor), mSeqId(0),
       mLastEvictCacheUs(getTimestampNow()) {
-    mValid = false;
-    bool& valid = mValid;
+    bool valid = false;
     sp<IConnection>& outConnection = mRemoteConnection;
     ConnectionId& id = mConnectionId;
     std::unique_ptr<BufferStatusChannel>& outChannel =
             mReleasing.mStatusChannel;
-    accessor->connect(
+    Return<void> transResult = accessor->connect(
             [&valid, &outConnection, &id, &outChannel]
             (ResultStatus status, sp<IConnection> connection,
              ConnectionId connectionId, const QueueDescriptor& desc) {
@@ -271,6 +273,7 @@ BufferPoolClient::Impl::Impl(const sp<IAccessor> &accessor)
                     }
                 }
             });
+    mValid = transResult.isOk() && valid;
 }
 
 bool BufferPoolClient::Impl::isActive(int64_t *lastTransactionUs, bool clearCache) {
@@ -411,6 +414,9 @@ ResultStatus BufferPoolClient::Impl::receive(
                                       *buffer ? true : false);
     ALOGV("client receive %lld - %u : %s (%d)", (long long)mConnectionId, bufferId,
           *buffer ? "ok" : "fail", posted);
+    if (mValid && mLocal && mLocalConnection) {
+        mLocalConnection->cleanUp(false);
+    }
     if (*buffer) {
         if (!posted) {
             buffer->reset();
@@ -433,13 +439,20 @@ void BufferPoolClient::Impl::postBufferRelease(BufferId bufferId) {
 bool BufferPoolClient::Impl::postSend(
         BufferId bufferId, ConnectionId receiver,
         TransactionId *transactionId, int64_t *timestampUs) {
-    std::lock_guard<std::mutex> lock(mReleasing.mLock);
-    *timestampUs = getTimestampNow();
-    *transactionId = (mConnectionId << 32) | mSeqId++;
-    // TODO: retry, add timeout, target?
-    return  mReleasing.mStatusChannel->postBufferStatusMessage(
-            *transactionId, bufferId, BufferStatus::TRANSFER_TO, mConnectionId,
-            receiver, mReleasing.mReleasingIds, mReleasing.mReleasedIds);
+    bool ret = false;
+    {
+        std::lock_guard<std::mutex> lock(mReleasing.mLock);
+        *timestampUs = getTimestampNow();
+        *transactionId = (mConnectionId << 32) | mSeqId++;
+        // TODO: retry, add timeout, target?
+        ret =  mReleasing.mStatusChannel->postBufferStatusMessage(
+                *transactionId, bufferId, BufferStatus::TRANSFER_TO, mConnectionId,
+                receiver, mReleasing.mReleasingIds, mReleasing.mReleasedIds);
+    }
+    if (mValid && mLocal && mLocalConnection) {
+        mLocalConnection->cleanUp(false);
+    }
+    return ret;
 }
 
 bool BufferPoolClient::Impl::postReceive(
@@ -557,7 +570,7 @@ ResultStatus BufferPoolClient::Impl::fetchBufferHandle(
         connection = mRemoteConnection;
     }
     ResultStatus status;
-    connection->fetch(
+    Return<void> transResult = connection->fetch(
             transactionId, bufferId,
             [&status, &handle]
             (ResultStatus outStatus, Buffer outBuffer) {
@@ -567,7 +580,7 @@ ResultStatus BufferPoolClient::Impl::fetchBufferHandle(
                             outBuffer.buffer.getNativeHandle());
                 }
             });
-    return status;
+    return transResult.isOk() ? status : ResultStatus::CRITICAL_ERROR;
 }
 
 
@@ -585,6 +598,10 @@ BufferPoolClient::~BufferPoolClient() {
 
 bool BufferPoolClient::isValid() {
     return mImpl && mImpl->isValid();
+}
+
+bool BufferPoolClient::isLocal() {
+    return mImpl && mImpl->isLocal();
 }
 
 bool BufferPoolClient::isActive(int64_t *lastTransactionUs, bool clearCache) {

@@ -336,39 +336,42 @@ void C2SoftMP3::process(
         return;
     }
 
-    const C2ConstLinearBlock inBuffer = work->input.buffers[0]->data().linearBlocks().front();
     bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
-    size_t inOffset = inBuffer.offset();
-    size_t inSize = inBuffer.size();
-    C2ReadView rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
-    if (inSize && rView.error()) {
-        ALOGE("read view map failed %d", rView.error());
-        work->result = rView.error();
-        return;
+    size_t inSize = 0u;
+    C2ReadView rView = mDummyReadView;
+    if (!work->input.buffers.empty()) {
+        rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        inSize = rView.capacity();
+        if (inSize && rView.error()) {
+            ALOGE("read view map failed %d", rView.error());
+            work->result = rView.error();
+            return;
+        }
     }
 
-    if (inSize == 0) {
+    if (inSize == 0 && !eos) {
         work->worklets.front()->output.flags = work->input.flags;
         work->worklets.front()->output.buffers.clear();
         work->worklets.front()->output.ordinal = work->input.ordinal;
         work->workletsProcessed = 1u;
-        if (eos) {
-            mSignalledOutputEos = true;
-            ALOGV("signalled EOS");
-        }
         return;
     }
     ALOGV("in buffer attr. size %zu timestamp %d frameindex %d", inSize,
           (int)work->input.ordinal.timestamp.peeku(), (int)work->input.ordinal.frameIndex.peeku());
 
+    int32_t numChannels = mConfig->num_channels;
     size_t calOutSize;
     std::vector<size_t> decodedSizes;
-    const uint8_t *inPtr = rView.data() + inOffset;
-    if (OK != calculateOutSize(const_cast<uint8 *>(inPtr), inSize, &decodedSizes)) {
+    if (inSize && OK != calculateOutSize(const_cast<uint8 *>(rView.data()),
+                                         inSize, &decodedSizes)) {
         work->result = C2_CORRUPTED;
         return;
     }
     calOutSize = std::accumulate(decodedSizes.begin(), decodedSizes.end(), 0);
+    if (eos) {
+        calOutSize += kPVMP3DecoderDelay * numChannels * sizeof(int16_t);
+    }
+
     std::shared_ptr<C2LinearBlock> block;
     C2MemoryUsage usage = { C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE };
     c2_status_t err = pool->fetchLinearBlock(calOutSize, usage, &block);
@@ -388,7 +391,6 @@ void C2SoftMP3::process(
     int outOffset = 0;
     auto it = decodedSizes.begin();
     size_t inPos = 0;
-    int32_t numChannels  = mConfig->num_channels;
     int32_t samplingRate = mConfig->samplingRate;
     while (inPos < inSize) {
         if (it == decodedSizes.end()) {
@@ -396,7 +398,7 @@ void C2SoftMP3::process(
             break;
         }
 
-        mConfig->pInputBuffer = const_cast<uint8 *>(inPtr + inPos);
+        mConfig->pInputBuffer = const_cast<uint8 *>(rView.data() + inPos);
         mConfig->inputBufferCurrentLength = (inSize - inPos);
         mConfig->inputBufferMaxLength = 0;
         mConfig->inputBufferUsedLength = 0;
@@ -464,6 +466,20 @@ void C2SoftMP3::process(
         outOffset = kPVMP3DecoderDelay * numChannels * sizeof(int16_t);
         mAnchorTimeStamp = work->input.ordinal.timestamp.peekull();
     }
+    if (eos) {
+        if (calOutSize >=
+            outSize + kPVMP3DecoderDelay * numChannels * sizeof(int16_t)) {
+            if (!memset(reinterpret_cast<int16_t*>(wView.data() + outSize), 0,
+                        kPVMP3DecoderDelay * numChannels * sizeof(int16_t))) {
+                mSignalledError = true;
+                work->result = C2_CORRUPTED;
+                return;
+             }
+            ALOGV("Adding 529 samples at end");
+            outSize += kPVMP3DecoderDelay * numChannels * sizeof(int16_t);
+        }
+    }
+
     uint64_t outTimeStamp = mProcessedSamples * 1000000ll / samplingRate;
     mProcessedSamples += ((outSize - outOffset) / (numChannels * sizeof(int16_t)));
     ALOGV("out buffer attr. offset %d size %d timestamp %u", outOffset, outSize - outOffset,

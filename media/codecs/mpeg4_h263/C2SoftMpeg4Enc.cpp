@@ -116,9 +116,14 @@ class C2SoftMpeg4Enc::IntfImpl : public C2InterfaceHelper {
                           C2P<C2VideoSizeStreamTuning::input>& me) {
         (void)mayBlock;
         // TODO: maybe apply block limit?
-        return me.F(me.v.width)
-            .validatePossible(me.v.width)
-            .plus(me.F(me.v.height).validatePossible(me.v.height));
+        C2R res = C2R::Ok();
+        if (!me.F(me.v.width).supportsAtAll(me.v.width)) {
+            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.width)));
+        }
+        if (!me.F(me.v.height).supportsAtAll(me.v.height)) {
+            res = res.plus(C2SettingResultBuilder::BadValue(me.F(me.v.height)));
+        }
+        return res;
     }
 
     uint32_t getWidth() const { return mSize->width; }
@@ -406,9 +411,27 @@ void C2SoftMpeg4Enc::process(
         work->worklets.front()->output.configUpdate.push_back(std::move(csd));
     }
 
+    std::shared_ptr<const C2GraphicView> rView;
+    std::shared_ptr<C2Buffer> inputBuffer;
+    if (!work->input.buffers.empty()) {
+        inputBuffer = work->input.buffers[0];
+        rView = std::make_shared<const C2GraphicView>(
+                inputBuffer->data().graphicBlocks().front().map().get());
+        if (rView->error() != C2_OK) {
+            ALOGE("graphic view map err = %d", rView->error());
+            work->result = rView->error();
+            return;
+        }
+    } else {
+        ALOGE("Empty input Buffer");
+        work->result = C2_BAD_VALUE;
+        return;
+    }
+
     uint64_t inputTimeStamp = work->input.ordinal.timestamp.peekull();
     bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
-    const C2ConstGraphicBlock inBuffer = work->input.buffers[0]->data().graphicBlocks().front();
+    const C2ConstGraphicBlock inBuffer =
+        inputBuffer->data().graphicBlocks().front();
     if (inBuffer.width() == 0 || inBuffer.height() == 0) {
         fillEmptyWork(work);
         if (eos) {
@@ -425,17 +448,11 @@ void C2SoftMpeg4Enc::process(
         work->result = C2_BAD_VALUE;
         return;
     }
-    const C2GraphicView rView = work->input.buffers[0]->data().graphicBlocks().front().map().get();
-    if (rView.error() != C2_OK) {
-        ALOGE("graphic view map err = %d", rView.error());
-        work->result = rView.error();
-        return;
-    }
 
-    const C2PlanarLayout &layout = rView.layout();
-    uint8_t *yPlane = const_cast<uint8_t *>(rView.data()[C2PlanarLayout::PLANE_Y]);
-    uint8_t *uPlane = const_cast<uint8_t *>(rView.data()[C2PlanarLayout::PLANE_U]);
-    uint8_t *vPlane = const_cast<uint8_t *>(rView.data()[C2PlanarLayout::PLANE_V]);
+    const C2PlanarLayout &layout = rView->layout();
+    uint8_t *yPlane = const_cast<uint8_t *>(rView->data()[C2PlanarLayout::PLANE_Y]);
+    uint8_t *uPlane = const_cast<uint8_t *>(rView->data()[C2PlanarLayout::PLANE_U]);
+    uint8_t *vPlane = const_cast<uint8_t *>(rView->data()[C2PlanarLayout::PLANE_V]);
     int32_t yStride = layout.planes[C2PlanarLayout::PLANE_Y].rowInc;
     int32_t uStride = layout.planes[C2PlanarLayout::PLANE_U].rowInc;
     int32_t vStride = layout.planes[C2PlanarLayout::PLANE_V].rowInc;
@@ -459,7 +476,7 @@ void C2SoftMpeg4Enc::process(
             vPlane = uPlane + yPlaneSize / 4;
             yStride = width;
             uStride = vStride = width / 2;
-            ConvertRGBToPlanarYUV(yPlane, yStride, height, rView);
+            ConvertRGBToPlanarYUV(yPlane, yStride, height, *rView.get());
             break;
         }
         case C2PlanarLayout::TYPE_YUV:

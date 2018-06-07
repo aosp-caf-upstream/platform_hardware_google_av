@@ -64,6 +64,16 @@ public:
          * to create a C2Handle from a handle - for C2Allocator::priorAllocation.
          */
         BUFFERQUEUE,
+
+        /**
+         * ID of indicating the end of platform allocator definition.
+         *
+         * \note always put this macro in the last place.
+         *
+         * Extended platform store plugin should use this macro as the start ID of its own allocator
+         * types.
+         */
+        PLATFORM_END,
     };
 };
 

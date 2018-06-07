@@ -243,7 +243,16 @@ Return<Status> Component::setOutputSurface(
     if (pool && pool->getAllocatorId() == C2PlatformAllocatorStore::BUFFERQUEUE) {
         std::shared_ptr<C2BufferQueueBlockPool> bqPool =
                 std::static_pointer_cast<C2BufferQueueBlockPool>(pool);
+        C2BufferQueueBlockPool::OnRenderCallback cb =
+            [this](uint64_t producer, int32_t slot, int64_t nsecs) {
+                // TODO: batch this
+                hidl_vec<IComponentListener::RenderedFrame> rendered;
+                rendered.resize(1);
+                rendered[0] = { producer, slot, nsecs };
+                mListener->onFramesRendered(rendered);
+        };
         if (bqPool) {
+            bqPool->setRenderCallback(cb);
             bqPool->configureProducer(surface);
         }
     }

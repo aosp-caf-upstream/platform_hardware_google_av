@@ -183,15 +183,18 @@ void C2SoftFlacEnc::process(
         return;
     }
 
-    const C2ConstLinearBlock inBuffer = work->input.buffers[0]->data().linearBlocks().front();
     bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
-    size_t inOffset = inBuffer.offset();
-    size_t inSize = inBuffer.size();
-    C2ReadView rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
-    if (inSize && rView.error()) {
-        ALOGE("read view map failed %d", rView.error());
-        work->result = C2_CORRUPTED;
-        return;
+    C2ReadView rView = mDummyReadView;
+    size_t inOffset = 0u;
+    size_t inSize = 0u;
+    if (!work->input.buffers.empty()) {
+        rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        inSize = rView.capacity();
+        if (inSize && rView.error()) {
+            ALOGE("read view map failed %d", rView.error());
+            work->result = C2_CORRUPTED;
+            return;
+        }
     }
 
     ALOGV("in buffer attr. size %zu timestamp %d frameindex %d, flags %x",
@@ -237,8 +240,8 @@ void C2SoftFlacEnc::process(
     mEncoderWriteData = true;
     mEncoderReturnedNbBytes = 0;
     size_t inPos = 0;
-    const uint8_t *inPtr = rView.data() + inOffset;
     while (inPos < inSize) {
+        const uint8_t *inPtr = rView.data() + inOffset;
         size_t processSize = MIN(kInBlockSize * channelCount * sizeof(int16_t), (inSize - inPos));
         const unsigned nbInputFrames = processSize / (channelCount * sizeof(int16_t));
         const unsigned nbInputSamples = processSize / sizeof(int16_t);

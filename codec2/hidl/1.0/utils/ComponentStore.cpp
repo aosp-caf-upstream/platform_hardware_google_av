@@ -167,6 +167,7 @@ Return<void> ComponentStore::createComponent(
             mStore->createComponent(name, &c2component));
 
     if (status == Status::OK) {
+        onInterfaceLoaded(c2component->intf());
         component = new Component(c2component, listener, this, pool);
         if (!component) {
             status = Status::CORRUPTED;
@@ -197,6 +198,7 @@ Return<void> ComponentStore::createInterface(
     c2_status_t res = mStore->createInterface(name, &c2interface);
     sp<IComponentInterface> interface;
     if (res == C2_OK) {
+        onInterfaceLoaded(c2interface);
         interface = new ComponentInterface(c2interface, this);
     }
     _hidl_cb((Status)res, interface);
@@ -232,6 +234,16 @@ Return<sp<IInputSurface>> ComponentStore::createInputSurface() {
             source);
 }
 
+void ComponentStore::onInterfaceLoaded(const std::shared_ptr<C2ComponentInterface> &intf) {
+    // invalidate unsupported struct descriptors if a new interface is loaded as it may have
+    // exposed new descriptors
+    std::lock_guard<std::mutex> lock(mStructDescriptorsMutex);
+    if (!mLoadedInterfaces.count(intf->getName())) {
+        mUnsupportedStructDescriptors.clear();
+        mLoadedInterfaces.emplace(intf->getName());
+    }
+}
+
 Return<void> ComponentStore::getStructDescriptors(
         const hidl_vec<uint32_t>& indices,
         getStructDescriptors_cb _hidl_cb) {
@@ -240,9 +252,21 @@ Return<void> ComponentStore::getStructDescriptors(
     Status res = Status::OK;
     for (size_t srcIx = 0; srcIx < indices.size(); ++srcIx) {
         std::lock_guard<std::mutex> lock(mStructDescriptorsMutex);
-        const auto item = mStructDescriptors.find(
-                C2Param::CoreIndex(indices[srcIx]).coreIndex());
+        const C2Param::CoreIndex coreIndex = C2Param::CoreIndex(indices[srcIx]).coreIndex();
+        const auto item = mStructDescriptors.find(coreIndex);
         if (item == mStructDescriptors.end()) {
+            // not in the cache, and not known to be unsupported, query local reflector
+            if (!mUnsupportedStructDescriptors.count(coreIndex)) {
+                std::shared_ptr<C2StructDescriptor> structDesc =
+                    mParamReflector->describe(coreIndex);
+                if (!structDesc) {
+                    mUnsupportedStructDescriptors.emplace(coreIndex);
+                } else {
+                    mStructDescriptors.insert({ coreIndex, structDesc });
+                    objcpy(&descriptors[dstIx++], *structDesc);
+                    continue;
+                }
+            }
             res = Status::NOT_FOUND;
         } else if (item->second) {
             objcpy(&descriptors[dstIx++], *item->second);

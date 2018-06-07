@@ -57,9 +57,18 @@ void SimpleC2Component::WorkQueue::markDrain(uint32_t drainMode) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+namespace {
+
+struct DummyReadView : public C2ReadView {
+    DummyReadView() : C2ReadView(C2_NO_INIT) {}
+};
+
+}  // namespace
+
 SimpleC2Component::SimpleC2Component(
         const std::shared_ptr<C2ComponentInterface> &intf)
-    : mIntf(intf) {
+    : mDummyReadView(DummyReadView()),
+      mIntf(intf) {
 }
 
 c2_status_t SimpleC2Component::setListener_vb(
@@ -347,50 +356,38 @@ void SimpleC2Component::processQueue() {
         }
     }
 
-    // TODO: use output block pool from CCodec, but that will need this class to get the
-    // blockpools config.
     if (!mOutputBlockPool) {
         c2_status_t err = [this] {
             // TODO: don't use query_vb
             C2StreamFormatConfig::output outputFormat(0u);
+            std::vector<std::unique_ptr<C2Param>> params;
             c2_status_t err = intf()->query_vb(
                     { &outputFormat },
-                    {},
+                    { C2PortBlockPoolsTuning::output::PARAM_TYPE },
                     C2_DONT_BLOCK,
-                    nullptr);
-            if (err != C2_OK) {
+                    &params);
+            if (err != C2_OK && err != C2_BAD_INDEX) {
+                ALOGD("query err = %d", err);
                 return err;
             }
-            int32_t poolMask = property_get_int32(
-                    "debug.stagefright.c2-poolmask",
-                    1 << C2PlatformAllocatorStore::ION);
-
-            C2Allocator::id_t allocatorId =
-                (outputFormat.value == C2FormatVideo) ? C2PlatformAllocatorStore::BUFFERQUEUE
-                        : C2PlatformAllocatorStore::ION;
             C2BlockPool::local_id_t poolId =
-                (outputFormat.value == C2FormatVideo) ? C2BlockPool::BASIC_GRAPHIC
+                outputFormat.value == C2FormatVideo
+                        ? C2BlockPool::BASIC_GRAPHIC
                         : C2BlockPool::BASIC_LINEAR;
+            if (params.size()) {
+                C2PortBlockPoolsTuning::output *outputPools =
+                    C2PortBlockPoolsTuning::output::From(params[0].get());
+                if (outputPools && outputPools->flexCount() >= 1) {
+                    poolId = outputPools->m.values[0];
+                }
+            }
 
-            if ((poolMask >> allocatorId) & 1) {
-                err = CreateCodec2BlockPool(
-                        allocatorId, shared_from_this(), &mOutputBlockPool);
-                ALOGD("Created output block pool with allocatorID %u => poolID %llu - %d",
-                        allocatorId,
-                        (unsigned long long)(
-                                mOutputBlockPool ? mOutputBlockPool->getLocalId() : 111000111),
-                        err);
-            } else {
-                err = C2_NOT_FOUND;
-            }
-            if (err != C2_OK) {
-                err = GetCodec2BlockPool(poolId, shared_from_this(), &mOutputBlockPool);
-                ALOGD("Using basic output block pool with poolID %llu => got %llu - %d",
-                        (unsigned long long)poolId,
-                        (unsigned long long)(
-                                mOutputBlockPool ? mOutputBlockPool->getLocalId() : 111000111),
-                        err);
-            }
+            err = GetCodec2BlockPool(poolId, shared_from_this(), &mOutputBlockPool);
+            ALOGD("Using output block pool with poolID %llu => got %llu - %d",
+                    (unsigned long long)poolId,
+                    (unsigned long long)(
+                            mOutputBlockPool ? mOutputBlockPool->getLocalId() : 111000111),
+                    err);
             return err;
         }();
         if (err != C2_OK) {

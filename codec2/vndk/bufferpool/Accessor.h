@@ -23,6 +23,8 @@
 #include <hidl/Status.h>
 #include "BufferStatus.h"
 
+#include <set>
+
 namespace android {
 namespace hardware {
 namespace media {
@@ -38,7 +40,38 @@ using ::android::hardware::Return;
 using ::android::hardware::Void;
 using ::android::sp;
 
+struct Accessor;
 struct Connection;
+
+/**
+ * Receives death notifications from remote connections.
+ * On death notifications, the connections are closed and used resources
+ * are released.
+ */
+struct ConnectionDeathRecipient : public hardware::hidl_death_recipient {
+    /**
+     * Registers a newly connected connection from remote processes.
+     */
+    void add(int64_t connectionId, const sp<Accessor> &accessor);
+
+    /**
+     * Removes a connection.
+     */
+    void remove(int64_t connectionId);
+
+    void addCookieToConnection(uint64_t cookie, int64_t connectionId);
+
+    virtual void serviceDied(
+            uint64_t /* cookie */,
+            const wp<::android::hidl::base::V1_0::IBase>& /* who */
+            ) override;
+
+private:
+    std::mutex mLock;
+    std::map<uint64_t, std::set<int64_t>>  mCookieToConnections;
+    std::map<int64_t, uint64_t> mConnectionToCookie;
+    std::map<int64_t, const wp<Accessor>> mAccessors;
+};
 
 /**
  * A buffer pool accessor which enables a buffer pool to communicate with buffer
@@ -105,6 +138,8 @@ struct Accessor : public IAccessor {
      * @param pConnectionId the id of the created connection
      * @param fmqDescPtr    FMQ descriptor for shared buffer status message
      *                      queue between a buffer pool and the client.
+     * @param local         true when a connection request comes from local process,
+     *                      false otherwise.
      *
      * @return OK when a connection is successfully made.
      *         NO_MEMORY when there is no memory.
@@ -112,7 +147,7 @@ struct Accessor : public IAccessor {
      */
     ResultStatus connect(
             sp<Connection> *connection, ConnectionId *pConnectionId,
-            const QueueDescriptor** fmqDescPtr);
+            const QueueDescriptor** fmqDescPtr, bool local);
 
     /**
      * Closes the specified connection to the client.
@@ -132,6 +167,11 @@ struct Accessor : public IAccessor {
      *                      to be recycled.
      */
     void cleanUp(bool clearCache);
+
+    /**
+     * Gets a hidl_death_recipient for remote connection death.
+     */
+    static sp<ConnectionDeathRecipient> getConnectionDeathRecipient();
 
 private:
     class Impl;

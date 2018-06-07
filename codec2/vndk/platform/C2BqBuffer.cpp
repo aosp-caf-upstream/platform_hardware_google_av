@@ -191,11 +191,23 @@ private:
         if (fence) {
             static constexpr int kFenceWaitTimeMs = 10;
 
-            status = fence->wait(kFenceWaitTimeMs);
+            status_t status = fence->wait(kFenceWaitTimeMs);
+            if (status == -ETIME) {
+                // fence is not signalled yet.
+                mProducer->cancelBuffer(slot, fenceHandle);
+                return C2_TIMED_OUT;
+            }
             if (status != android::NO_ERROR) {
                 ALOGD("buffer fence wait error %d", status);
                 mProducer->cancelBuffer(slot, fenceHandle);
                 return C2_BAD_VALUE;
+            } else if (mRenderCallback) {
+                nsecs_t signalTime = fence->getSignalTime();
+                if (signalTime >= 0 && signalTime < INT64_MAX) {
+                    mRenderCallback(mProducerId, slot, signalTime);
+                } else {
+                    ALOGV("got fence signal time of %lld", (long long)signalTime);
+                }
             }
         }
 
@@ -321,6 +333,11 @@ public:
         return C2_TIMED_OUT;
     }
 
+    void setRenderCallback(const OnRenderCallback &renderCallback) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mRenderCallback = renderCallback;
+    }
+
     void configureProducer(const sp<HGraphicBufferProducer> &producer) {
         int32_t status = android::OK;
         uint64_t producerId = 0;
@@ -366,6 +383,8 @@ private:
 
     c2_status_t mInit;
     uint64_t mProducerId;
+    OnRenderCallback mRenderCallback;
+
     const std::shared_ptr<C2Allocator> mAllocator;
 
     std::mutex mMutex;
@@ -413,5 +432,11 @@ c2_status_t C2BufferQueueBlockPool::fetchGraphicBlock(
 void C2BufferQueueBlockPool::configureProducer(const sp<HGraphicBufferProducer> &producer) {
     if (mImpl) {
         mImpl->configureProducer(producer);
+    }
+}
+
+void C2BufferQueueBlockPool::setRenderCallback(const OnRenderCallback &renderCallback) {
+    if (mImpl) {
+        mImpl->setRenderCallback(renderCallback);
     }
 }

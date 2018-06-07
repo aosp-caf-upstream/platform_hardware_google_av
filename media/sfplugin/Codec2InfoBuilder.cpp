@@ -59,7 +59,8 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
     //
     // debug.stagefright.ccodec supports 5 values.
     //   0 - Only OMX components are available.
-    //   1 - Codec2.0 software audio decoders are available and ranked 1st.
+    //   1 - Codec2.0 software audio decoders/encoders are available and
+    //       ranked 1st.
     //       Components with "c2.vda." prefix are available with their normal
     //       ranks.
     //       Other components with ".avc.decoder" or ".avc.encoder" suffix are
@@ -104,8 +105,7 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
                 break;
             }
             if (hasPrefix(trait.name, "c2.android.")) {
-                if (trait.domain == C2Component::DOMAIN_AUDIO &&
-                        trait.kind == C2Component::KIND_DECODER) {
+                if (trait.domain == C2Component::DOMAIN_AUDIO) {
                     rank = 1;
                     break;
                 }
@@ -265,6 +265,10 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
                     caps->addColorFormat(COLOR_FormatSurface);
                 }
                 caps->addColorFormat(COLOR_FormatYUV420Flexible);
+                caps->addColorFormat(COLOR_FormatYUV420Planar);
+                caps->addColorFormat(COLOR_FormatYUV420SemiPlanar);
+                caps->addColorFormat(COLOR_FormatYUV420PackedPlanar);
+                caps->addColorFormat(COLOR_FormatYUV420PackedSemiPlanar);
                 // framework video encoders must support surface format, though it is unclear
                 // that they will be able to map it if it is opaque
                 if (encoder && trait.name.find("android") != std::string::npos) {
