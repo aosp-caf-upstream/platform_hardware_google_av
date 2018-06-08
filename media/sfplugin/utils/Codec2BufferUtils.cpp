@@ -18,8 +18,13 @@
 #define LOG_TAG "Codec2BufferUtils"
 #include <utils/Log.h>
 
+#include <list>
+#include <mutex>
+
 #include <media/hardware/HardwareAPI.h>
 #include <media/stagefright/foundation/AUtils.h>
+
+#include <C2Debug.h>
 
 #include "Codec2BufferUtils.h"
 
@@ -198,6 +203,196 @@ MediaImage2 CreateYUV420SemiPlanarMediaImage2(
             }
         },
     };
+}
+
+status_t ConvertRGBToPlanarYUV(
+        uint8_t *dstY, size_t dstStride, size_t dstVStride, size_t bufferSize,
+        const C2GraphicView &src) {
+    CHECK(dstY != nullptr);
+    CHECK((src.width() & 1) == 0);
+    CHECK((src.height() & 1) == 0);
+
+    if (dstStride * dstVStride * 3 / 2 > bufferSize) {
+        ALOGD("conversion buffer is too small for converting from RGB to YUV");
+        return NO_MEMORY;
+    }
+
+    uint8_t *dstU = dstY + dstStride * dstVStride;
+    uint8_t *dstV = dstU + (dstStride >> 1) * (dstVStride >> 1);
+
+    const C2PlanarLayout &layout = src.layout();
+    const uint8_t *pRed   = src.data()[C2PlanarLayout::PLANE_R];
+    const uint8_t *pGreen = src.data()[C2PlanarLayout::PLANE_G];
+    const uint8_t *pBlue  = src.data()[C2PlanarLayout::PLANE_B];
+
+#define CLIP3(x,y,z) (((z) < (x)) ? (x) : (((z) > (y)) ? (y) : (z)))
+    for (size_t y = 0; y < src.height(); ++y) {
+        for (size_t x = 0; x < src.width(); ++x) {
+            uint8_t red = *pRed;
+            uint8_t green = *pGreen;
+            uint8_t blue = *pBlue;
+
+            // using ITU-R BT.601 conversion matrix
+            unsigned luma =
+                CLIP3(0, (((red * 66 + green * 129 + blue * 25) >> 8) + 16), 255);
+
+            dstY[x] = luma;
+
+            if ((x & 1) == 0 && (y & 1) == 0) {
+                unsigned U =
+                    CLIP3(0, (((-red * 38 - green * 74 + blue * 112) >> 8) + 128), 255);
+
+                unsigned V =
+                    CLIP3(0, (((red * 112 - green * 94 - blue * 18) >> 8) + 128), 255);
+
+                dstU[x >> 1] = U;
+                dstV[x >> 1] = V;
+            }
+            pRed   += layout.planes[C2PlanarLayout::PLANE_R].colInc;
+            pGreen += layout.planes[C2PlanarLayout::PLANE_G].colInc;
+            pBlue  += layout.planes[C2PlanarLayout::PLANE_B].colInc;
+        }
+
+        if ((y & 1) == 0) {
+            dstU += dstStride >> 1;
+            dstV += dstStride >> 1;
+        }
+
+        pRed   -= layout.planes[C2PlanarLayout::PLANE_R].colInc * src.width();
+        pGreen -= layout.planes[C2PlanarLayout::PLANE_G].colInc * src.width();
+        pBlue  -= layout.planes[C2PlanarLayout::PLANE_B].colInc * src.width();
+        pRed   += layout.planes[C2PlanarLayout::PLANE_R].rowInc;
+        pGreen += layout.planes[C2PlanarLayout::PLANE_G].rowInc;
+        pBlue  += layout.planes[C2PlanarLayout::PLANE_B].rowInc;
+
+        dstY += dstStride;
+    }
+    return OK;
+}
+
+namespace {
+
+/**
+ * A block of raw allocated memory.
+ */
+struct MemoryBlockPoolBlock {
+    MemoryBlockPoolBlock(size_t size)
+        : mData(new uint8_t[size]), mSize(mData ? size : 0) { }
+
+    ~MemoryBlockPoolBlock() {
+        delete[] mData;
+    }
+
+    const uint8_t *data() const {
+        return mData;
+    }
+
+    size_t size() const {
+        return mSize;
+    }
+
+    C2_DO_NOT_COPY(MemoryBlockPoolBlock);
+
+private:
+    uint8_t *mData;
+    size_t mSize;
+};
+
+/**
+ * A simple raw memory block pool implementation.
+ */
+struct MemoryBlockPoolImpl {
+    void release(std::list<MemoryBlockPoolBlock>::const_iterator block) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        // return block to free blocks if it is the current size; otherwise, discard
+        if (block->size() == mCurrentSize) {
+            mFreeBlocks.splice(mFreeBlocks.begin(), mBlocksInUse, block);
+        } else {
+            mBlocksInUse.erase(block);
+        }
+    }
+
+    std::list<MemoryBlockPoolBlock>::const_iterator fetch(size_t size) {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mFreeBlocks.remove_if([size](const MemoryBlockPoolBlock &block) -> bool {
+            return block.size() != size;
+        });
+        mCurrentSize = size;
+        if (mFreeBlocks.empty()) {
+            mBlocksInUse.emplace_front(size);
+        } else {
+            mBlocksInUse.splice(mBlocksInUse.begin(), mFreeBlocks, mFreeBlocks.begin());
+        }
+        return mBlocksInUse.begin();
+    }
+
+    MemoryBlockPoolImpl() = default;
+
+    C2_DO_NOT_COPY(MemoryBlockPoolImpl);
+
+private:
+    std::mutex mMutex;
+    std::list<MemoryBlockPoolBlock> mFreeBlocks;
+    std::list<MemoryBlockPoolBlock> mBlocksInUse;
+    size_t mCurrentSize;
+};
+
+} // namespace
+
+struct MemoryBlockPool::Impl : MemoryBlockPoolImpl {
+};
+
+struct MemoryBlock::Impl {
+    Impl(std::list<MemoryBlockPoolBlock>::const_iterator block,
+         std::shared_ptr<MemoryBlockPoolImpl> pool)
+        : mBlock(block), mPool(pool) {
+    }
+
+    ~Impl() {
+        mPool->release(mBlock);
+    }
+
+    const uint8_t *data() const {
+        return mBlock->data();
+    }
+
+    size_t size() const {
+        return mBlock->size();
+    }
+
+private:
+    std::list<MemoryBlockPoolBlock>::const_iterator mBlock;
+    std::shared_ptr<MemoryBlockPoolImpl> mPool;
+};
+
+MemoryBlock MemoryBlockPool::fetch(size_t size) {
+    std::list<MemoryBlockPoolBlock>::const_iterator poolBlock = mImpl->fetch(size);
+    return MemoryBlock(std::make_shared<MemoryBlock::Impl>(
+            poolBlock, std::static_pointer_cast<MemoryBlockPoolImpl>(mImpl)));
+}
+
+MemoryBlockPool::MemoryBlockPool()
+    : mImpl(std::make_shared<MemoryBlockPool::Impl>()) {
+}
+
+MemoryBlock::MemoryBlock(std::shared_ptr<MemoryBlock::Impl> impl)
+    : mImpl(impl) {
+}
+
+MemoryBlock::MemoryBlock() = default;
+
+MemoryBlock::~MemoryBlock() = default;
+
+const uint8_t* MemoryBlock::data() const {
+    return mImpl ? mImpl->data() : nullptr;
+}
+
+size_t MemoryBlock::size() const {
+    return mImpl ? mImpl->size() : 0;
+}
+
+MemoryBlock MemoryBlock::Allocate(size_t size) {
+    return MemoryBlockPool().fetch(size);
 }
 
 }  // namespace android

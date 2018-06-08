@@ -19,8 +19,9 @@
 
 #include <media/stagefright/foundation/MediaDefs.h>
 
-#include <SimpleC2Component.h>
 #include <C2PlatformSupport.h>
+#include <Codec2BufferUtils.h>
+#include <SimpleC2Component.h>
 #include <SimpleC2Interface.h>
 #include <util/C2InterfaceHelper.h>
 
@@ -213,8 +214,7 @@ struct C2SoftVpxEnc : public SimpleC2Component {
 
      // Conversion buffer is needed to input to
      // yuv420 planar format.
-     uint8_t* mConversionBuffer;
-     size_t mConversionBufferSize;
+     MemoryBlock mConversionBuffer;
 
      // Request Key Frame
      bool mKeyFrameRequested;

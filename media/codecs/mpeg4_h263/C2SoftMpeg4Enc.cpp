@@ -24,6 +24,7 @@
 
 #include <inttypes.h>
 
+#include <media/hardware/VideoAPI.h>
 #include <media/stagefright/foundation/AUtils.h>
 #include <media/stagefright/MediaDefs.h>
 #include <utils/misc.h>
@@ -208,62 +209,6 @@ void C2SoftMpeg4Enc::onRelease() {
 
 c2_status_t C2SoftMpeg4Enc::onFlush_sm() {
     return C2_OK;
-}
-
-static void ConvertRGBToPlanarYUV(uint8_t *dstY, size_t dstHStride,
-                                  size_t dstVStride, const C2GraphicView &src) {
-    CHECK((dstHStride & 1) == 0);
-    CHECK((dstVStride & 1) == 0);
-
-    uint8_t *dstU = dstY + dstHStride * dstVStride;
-    uint8_t *dstV = dstU + (dstHStride >> 1) * (dstVStride >> 1);
-
-    const C2PlanarLayout &layout = src.layout();
-    const uint8_t *pRed   = src.data()[C2PlanarLayout::PLANE_R];
-    const uint8_t *pGreen = src.data()[C2PlanarLayout::PLANE_G];
-    const uint8_t *pBlue  = src.data()[C2PlanarLayout::PLANE_B];
-
-    for (size_t y = 0; y < dstVStride; ++y) {
-        for (size_t x = 0; x < dstHStride; ++x) {
-            unsigned red   = *pRed;
-            unsigned green = *pGreen;
-            unsigned blue  = *pBlue;
-
-            // using ITU-R BT.601 conversion matrix
-            unsigned luma =
-                ((red * 66 + green * 129 + blue * 25) >> 8) + 16;
-
-            dstY[x] = luma;
-
-            if ((x & 1) == 0 && (y & 1) == 0) {
-                unsigned U =
-                    ((-red * 38 - green * 74 + blue * 112) >> 8) + 128;
-
-                unsigned V =
-                    ((red * 112 - green * 94 - blue * 18) >> 8) + 128;
-
-                dstU[x >> 1] = U;
-                dstV[x >> 1] = V;
-            }
-            pRed   += layout.planes[C2PlanarLayout::PLANE_R].colInc;
-            pGreen += layout.planes[C2PlanarLayout::PLANE_G].colInc;
-            pBlue  += layout.planes[C2PlanarLayout::PLANE_B].colInc;
-        }
-
-        if ((y & 1) == 0) {
-            dstU += dstHStride >> 1;
-            dstV += dstHStride >> 1;
-        }
-
-        pRed   -= layout.planes[C2PlanarLayout::PLANE_R].colInc * dstHStride;
-        pGreen -= layout.planes[C2PlanarLayout::PLANE_G].colInc * dstHStride;
-        pBlue  -= layout.planes[C2PlanarLayout::PLANE_B].colInc * dstHStride;
-        pRed   += layout.planes[C2PlanarLayout::PLANE_R].rowInc;
-        pGreen += layout.planes[C2PlanarLayout::PLANE_G].rowInc;
-        pBlue  += layout.planes[C2PlanarLayout::PLANE_B].rowInc;
-
-        dstY += dstHStride;
-    }
 }
 
 static void fillEmptyWork(const std::unique_ptr<C2Work> &work) {
@@ -458,35 +403,65 @@ void C2SoftMpeg4Enc::process(
     int32_t vStride = layout.planes[C2PlanarLayout::PLANE_V].rowInc;
     uint32_t width = mIntf->getWidth();
     uint32_t height = mIntf->getHeight();
+    // width and height are always even (as block size is 16x16)
+    CHECK_EQ((width & 1u), 0u);
+    CHECK_EQ((height & 1u), 0u);
+    size_t yPlaneSize = width * height;
     switch (layout.type) {
         case C2PlanarLayout::TYPE_RGB:
         // fall-through
         case C2PlanarLayout::TYPE_RGBA: {
-            size_t yPlaneSize = width * height;
-            std::unique_ptr<uint8_t[]> freeBuffer;
-            if (mFreeConversionBuffers.empty()) {
-                freeBuffer.reset(new uint8_t[yPlaneSize * 3 / 2]);
-            } else {
-                freeBuffer.swap(mFreeConversionBuffers.front());
-                mFreeConversionBuffers.pop_front();
-            }
-            yPlane = freeBuffer.get();
-            mConversionBuffersInUse.push_back(std::move(freeBuffer));
+            MemoryBlock conversionBuffer = mConversionBuffers.fetch(yPlaneSize * 3 / 2);
+            mConversionBuffersInUse.emplace(conversionBuffer.data(), conversionBuffer);
+            yPlane = conversionBuffer.data();
             uPlane = yPlane + yPlaneSize;
             vPlane = uPlane + yPlaneSize / 4;
             yStride = width;
             uStride = vStride = width / 2;
-            ConvertRGBToPlanarYUV(yPlane, yStride, height, *rView.get());
+            ConvertRGBToPlanarYUV(yPlane, yStride, height, conversionBuffer.size(), *rView.get());
             break;
         }
-        case C2PlanarLayout::TYPE_YUV:
-            // fall-through
-        case C2PlanarLayout::TYPE_YUVA:
-            // Do nothing
+        case C2PlanarLayout::TYPE_YUV: {
+            if (!IsYUV420(*rView)) {
+                ALOGE("input is not YUV420");
+                work->result = C2_BAD_VALUE;
+                break;
+            }
+
+            if (layout.planes[layout.PLANE_Y].colInc == 1
+                    && layout.planes[layout.PLANE_U].colInc == 1
+                    && layout.planes[layout.PLANE_V].colInc == 1) {
+                // I420 compatible - planes are already set up above
+                break;
+            }
+
+            // copy to I420
+            MemoryBlock conversionBuffer = mConversionBuffers.fetch(yPlaneSize * 3 / 2);
+            mConversionBuffersInUse.emplace(conversionBuffer.data(), conversionBuffer);
+            MediaImage2 img = CreateYUV420PlanarMediaImage2(width, height, width, height);
+            status_t err = ImageCopy(conversionBuffer.data(), &img, *rView);
+            if (err != OK) {
+                ALOGE("Buffer conversion failed: %d", err);
+                work->result = C2_BAD_VALUE;
+                return;
+            }
+            yPlane = conversionBuffer.data();
+            uPlane = yPlane + yPlaneSize;
+            vPlane = uPlane + yPlaneSize / 4;
+            yStride = width;
+            uStride = vStride = width / 2;
             break;
+        }
+
+        case C2PlanarLayout::TYPE_YUVA:
+            ALOGE("YUVA plane type is not supported");
+            work->result = C2_BAD_VALUE;
+            return;
+
         default:
             ALOGE("Unrecognized plane type: %d", layout.type);
             work->result = C2_BAD_VALUE;
+            return;
     }
 
     CHECK(NULL != yPlane);
@@ -530,13 +505,7 @@ void C2SoftMpeg4Enc::process(
         mSignalledOutputEos = true;
     }
 
-    auto it = std::find_if(
-            mConversionBuffersInUse.begin(), mConversionBuffersInUse.end(),
-            [yPlane](const auto &elem) { return elem.get() == yPlane; });
-    if (it != mConversionBuffersInUse.end()) {
-        mFreeConversionBuffers.push_back(std::move(*it));
-        mConversionBuffersInUse.erase(it);
-    }
+    mConversionBuffersInUse.erase(yPlane);
 }
 
 c2_status_t C2SoftMpeg4Enc::drain(

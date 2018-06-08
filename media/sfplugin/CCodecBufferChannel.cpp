@@ -252,26 +252,6 @@ private:
     DISALLOW_EVIL_CONSTRUCTORS(OutputBuffers);
 };
 
-class CCodecBufferChannel::OutputBufferQueue {
-public:
-    OutputBufferQueue() : mIgbp(nullptr), mIgbpId(0) {}
-    bool isNewIgbp(sp<IGraphicBufferProducer> igbp) {
-        if (!igbp || igbp == mIgbp) return false;
-        mIgbp = igbp;
-        mIgbp->getUniqueId(&mIgbpId);
-        mIgbp->setMaxDequeuedBufferCount(16); // TODO: tune
-        return true;
-    }
-
-    bool isNewIgbpId(uint64_t igbpId) {
-        return igbpId != mIgbpId;
-    }
-
-private:
-    sp<IGraphicBufferProducer> mIgbp;
-    uint64_t mIgbpId;
-};
-
 namespace {
 
 // TODO: get this info from component
@@ -1206,7 +1186,6 @@ CCodecBufferChannel::CCodecBufferChannel(
       mCCodecCallback(callback),
       mFrameIndex(0u),
       mFirstValidFrameIndex(0u),
-      mOutputBufferQueue(new OutputBufferQueue()),
       mMetaMode(MODE_NONE),
       mPendingFeed(0) {
 }
@@ -1562,23 +1541,11 @@ status_t CCodecBufferChannel::renderOutputBuffer(
         std::static_pointer_cast<const C2StreamHdrStaticInfo::output>(
                 c2Buffer->getInfo(C2StreamHdrStaticInfo::output::PARAM_TYPE));
 
-    Mutexed<OutputSurface>::Locked output(mOutputSurface);
-    if (output->surface == nullptr) {
-        ALOGE("no surface");
-        return OK;
-    }
-    sp<IGraphicBufferProducer> igbp = output->surface->getIGraphicBufferProducer();
-    if (mOutputBufferQueue->isNewIgbp(igbp)) {
-        sp<HGraphicBufferProducer> higbp = igbp->getHalInterface();
-        if (!higbp) {
-            higbp = new TWGraphicBufferProducer<HGraphicBufferProducer>(igbp);
-        }
-        Mutexed<BlockPools>::Locked pools(mBlockPools);
-        // set output surface for managed pools (other than ion or gralloc-backed pool)
-        if (pools->outputPoolId >= C2BlockPool::PLATFORM_START
-                && pools->outputAllocatorId != C2PlatformAllocatorStore::GRALLOC
-                && pools->outputAllocatorId != C2PlatformAllocatorStore::ION) {
-            mComponent->setOutputSurface(pools->outputPoolId, higbp);
+    {
+        Mutexed<OutputSurface>::Locked output(mOutputSurface);
+        if (output->surface == nullptr) {
+            ALOGE("no surface");
+            return OK;
         }
     }
 
@@ -1588,42 +1555,6 @@ status_t CCodecBufferChannel::renderOutputBuffer(
         return UNKNOWN_ERROR;
     }
     const C2ConstGraphicBlock &block = blocks.front();
-
-    native_handle_t *grallocHandle = UnwrapNativeCodec2GrallocHandle(block.handle());
-    uint32_t width;
-    uint32_t height;
-    uint32_t format;
-    uint64_t usage;
-    uint32_t stride;
-    uint64_t igbp_id;
-    int32_t igbp_slot;
-    _UnwrapNativeCodec2GrallocMetadata(
-            block.handle(), &width, &height, &format, &usage, &stride,
-            &igbp_id, (uint32_t *)&igbp_slot);
-    ALOGV("attaching buffer (%u*%u): (%u*%u, fmt %#x, usage %#llx, stride %u)",
-            block.width(),
-            block.height(),
-            width, height, format, (long long)usage, stride);
-
-    status_t result = OK;
-    if (mOutputBufferQueue->isNewIgbpId(igbp_id)) {
-        sp<GraphicBuffer> graphicBuffer(new GraphicBuffer(
-                grallocHandle,
-                GraphicBuffer::CLONE_HANDLE,
-                width, height, format, 1, usage, stride));
-        // TODO: detach?
-        graphicBuffer->setGenerationNumber(output->generation);
-        result = igbp->attachBuffer(&igbp_slot, graphicBuffer);
-        if (result != OK) {
-            native_handle_delete(grallocHandle);
-            ALOGI("attachBuffer failed: %d", result);
-            return result;
-        }
-        ALOGV("attach buffer from %" PRIu64 " : %d", igbp_id, igbp_slot);
-    } else {
-        ALOGV("dequeued buffer arrived %" PRIu64 " %d", igbp_id, igbp_slot);
-    }
-    native_handle_delete(grallocHandle);
 
     // TODO: revisit this after C2Fence implementation.
     android::IGraphicBufferProducer::QueueBufferInput qbi(
@@ -1667,7 +1598,7 @@ status_t CCodecBufferChannel::renderOutputBuffer(
         qbi.setHdrMetadata(hdr);
     }
     android::IGraphicBufferProducer::QueueBufferOutput qbo;
-    result = igbp->queueBuffer(igbp_slot, qbi, &qbo);
+    status_t result = mComponent->queueToOutputSurface(block, qbi, &qbo);
     if (result != OK) {
         ALOGE("queueBuffer failed: %d", result);
         return result;
@@ -1746,7 +1677,8 @@ status_t CCodecBufferChannel::start(
     std::shared_ptr<C2AllocatorStore> allocatorStore = GetCodec2PlatformAllocatorStore();
     int poolMask = property_get_int32(
             "debug.stagefright.c2-poolmask",
-            1 << C2PlatformAllocatorStore::ION);
+            1 << C2PlatformAllocatorStore::ION |
+            1 << C2PlatformAllocatorStore::BUFFERQUEUE);
 
     if (inputFormat != nullptr) {
         bool graphic = (iStreamFormat.value == C2FormatVideo);
@@ -1848,14 +1780,18 @@ status_t CCodecBufferChannel::start(
     }
 
     if (outputFormat != nullptr) {
-        bool hasOutputSurface = false;
+        sp<IGraphicBufferProducer> outputSurface;
+        uint32_t outputGeneration;
         {
             Mutexed<OutputSurface>::Locked output(mOutputSurface);
-            hasOutputSurface = (output->surface != nullptr);
+            outputSurface = output->surface ?
+                    output->surface->getIGraphicBufferProducer() : nullptr;
+            outputGeneration = output->generation;
         }
 
         bool graphic = (oStreamFormat.value == C2FormatVideo);
         C2BlockPool::local_id_t outputPoolId_;
+
         {
             Mutexed<BlockPools>::Locked pools(mBlockPools);
 
@@ -1891,7 +1827,7 @@ status_t CCodecBufferChannel::start(
 
             // use bufferqueue if outputting to a surface
             if (pools->outputAllocatorId == C2PlatformAllocatorStore::GRALLOC
-                    && hasOutputSurface
+                    && outputSurface
                     && ((poolMask >> C2PlatformAllocatorStore::BUFFERQUEUE) & 1)) {
                 pools->outputAllocatorId = C2PlatformAllocatorStore::BUFFERQUEUE;
             }
@@ -1927,7 +1863,7 @@ status_t CCodecBufferChannel::start(
         Mutexed<std::unique_ptr<OutputBuffers>>::Locked buffers(mOutputBuffers);
 
         if (graphic) {
-            if (hasOutputSurface) {
+            if (outputSurface) {
                 buffers->reset(new GraphicOutputBuffers);
             } else {
                 buffers->reset(new RawGraphicOutputBuffers);
@@ -1939,16 +1875,11 @@ status_t CCodecBufferChannel::start(
 
 
         // Try to set output surface to created block pool if given.
-        if (hasOutputSurface) {
-            Mutexed<OutputSurface>::Locked output(mOutputSurface);
-            sp<IGraphicBufferProducer> igbp = output->surface->getIGraphicBufferProducer();
-            if (mOutputBufferQueue->isNewIgbp(igbp)) {
-                sp<HGraphicBufferProducer> higbp = igbp->getHalInterface();
-                if (!higbp) {
-                    higbp = new TWGraphicBufferProducer<HGraphicBufferProducer>(igbp);
-                }
-                mComponent->setOutputSurface(outputPoolId_, higbp);
-            }
+        if (outputSurface) {
+            mComponent->setOutputSurface(
+                    outputPoolId_,
+                    outputSurface,
+                    outputGeneration);
         }
 
         if (oStreamFormat.value == C2FormatAudio) {
@@ -2167,7 +2098,6 @@ status_t CCodecBufferChannel::setSurface(const sp<Surface> &newSurface) {
         newSurface->setMaxDequeuedBufferCount(kMinOutputBufferArraySize);
     }
 
-    Mutexed<OutputSurface>::Locked output(mOutputSurface);
 //    if (newSurface == nullptr) {
 //        if (*surface != nullptr) {
 //            ALOGW("cannot unset a surface");
@@ -2181,14 +2111,40 @@ status_t CCodecBufferChannel::setSurface(const sp<Surface> &newSurface) {
 //        return INVALID_OPERATION;
 //    }
 
-    output->surface = newSurface;
+    uint32_t generation;
+
     ANativeWindowBuffer *buf;
-    ANativeWindow *window = output->surface.get();
+    ANativeWindow *window = newSurface.get();
     int fenceFd;
     window->dequeueBuffer(window, &buf, &fenceFd);
     sp<GraphicBuffer> gbuf = GraphicBuffer::from(buf);
-    output->generation = gbuf->getGenerationNumber();
+    generation = gbuf->getGenerationNumber();
     window->cancelBuffer(window, buf, fenceFd);
+
+    std::shared_ptr<Codec2Client::Configurable> outputPoolIntf;
+    C2BlockPool::local_id_t outputPoolId;
+    {
+        Mutexed<BlockPools>::Locked pools(mBlockPools);
+        outputPoolId = pools->outputPoolId;
+        outputPoolIntf = pools->outputPoolIntf;
+    }
+
+    if (outputPoolIntf) {
+        if (mComponent->setOutputSurface(
+                outputPoolId,
+                newSurface->getIGraphicBufferProducer(),
+                generation) != C2_OK) {
+            ALOGW("setSurface -- setOutputSurface() failed to configure "
+                    "new surface to the component's output block pool.");
+            return INVALID_OPERATION;
+        }
+    }
+
+    {
+        Mutexed<OutputSurface>::Locked output(mOutputSurface);
+        output->surface = newSurface;
+        output->generation = generation = gbuf->getGenerationNumber();
+    }
 
     return OK;
 }

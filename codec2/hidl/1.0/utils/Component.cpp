@@ -162,9 +162,9 @@ struct Component::Listener : public C2Component::Listener {
             Return<void> transStatus = listener->onWorkDone(workBundle);
             if (!transStatus.isOk()) {
                 ALOGE("onWorkDone -- transaction failed.");
+                return;
             }
-
-            // Finish buffer transfers: nothing else to do
+            yieldBufferQueueBlocks(c2workItems, true);
         }
     }
 
@@ -220,11 +220,11 @@ Return<void> Component::flush(flush_cb _hidl_cb) {
 
     Status res = static_cast<Status>(c2res);
     if (c2res == C2_OK) {
-        // TODO: Connect with bufferpool API for buffer transfers
         ALOGV("flush -- converting output");
         res = objcpy(&flushedWorkBundle, c2flushedWorks, &mBufferPoolSender);
     }
     _hidl_cb(res, flushedWorkBundle);
+    yieldBufferQueueBlocks(c2flushedWorks, true);
     return Void();
 }
 

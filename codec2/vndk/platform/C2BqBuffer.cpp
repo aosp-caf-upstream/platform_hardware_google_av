@@ -41,73 +41,94 @@ using ::android::sp;
 using ::android::status_t;
 using ::android::wp;
 
-struct C2_HIDE C2BufferQueueBlockPoolData : public _C2BlockPoolData {
+struct C2BufferQueueBlockPoolData : public _C2BlockPoolData {
+
+    bool held;
+    bool local;
+    uint64_t bqId;
+    int32_t bqSlot;
+    sp<HGraphicBufferProducer> igbp;
+    std::shared_ptr<C2BufferQueueBlockPool::Impl> localPool;
 
     virtual type_t getType() const override {
         return TYPE_BUFFERQUEUE;
     }
 
-    void getBufferQueueData(uint64_t *igbp_id, int32_t *igbp_slot) const {
-        *igbp_id = mIgbpId;
-        *igbp_slot = mIgbpSlot;
-    }
-
-    void remove() {
-        mConnected = false;
-    }
-
+    // Create a remote BlockPoolData.
     C2BufferQueueBlockPoolData(
-            uint64_t igbp_id, int32_t igbp_slot)
-            : mLocal(false), mConnected(true), mIgbpId(igbp_id), mIgbpSlot(igbp_slot) {
+            uint64_t bqId, int32_t bqSlot,
+            const sp<HGraphicBufferProducer>& producer = nullptr);
 
-    }
-
-    // in case of connect without attaching from remote side
-    void setOwner(sp<HGraphicBufferProducer> producer) {
-        if (!mLocal && producer) {
-            mProducer = producer;
-        }
-    }
-
-    // in case of attach and connnect from remote side
-    void setNewOwner(sp<HGraphicBufferProducer> producer, uint64_t igbp_id, int32_t igbp_slot) {
-        if (!mLocal && producer) {
-            mProducer = producer;
-            mIgbpId = igbp_id;
-            mIgbpSlot = igbp_slot;
-        }
-    }
-
+    // Create a local BlockPoolData.
     C2BufferQueueBlockPoolData(
-            uint64_t igbp_id, int32_t igbp_slot,
-            std::shared_ptr<C2BufferQueueBlockPool::Impl> pool)
-            : mLocal(true), mConnected(true), mIgbpId(igbp_id), mIgbpSlot(igbp_slot), mPool(pool) {
-        // TODO: use remove when a block is being disconnected. And remove
-        // clearing mConnected.
-        mConnected = false;
-    }
+            uint64_t bqId, int32_t bqSlot,
+            const std::shared_ptr<C2BufferQueueBlockPool::Impl>& pool);
 
     virtual ~C2BufferQueueBlockPoolData() override;
 
-private:
-    bool mLocal;
-    bool mConnected;
-    uint64_t mIgbpId;
-    int32_t mIgbpSlot;
-    std::weak_ptr<C2BufferQueueBlockPool::Impl> mPool;
-    wp<HGraphicBufferProducer> mProducer;
 };
 
 bool _C2BlockFactory::GetBufferQueueData(
-        const std::shared_ptr<const _C2BlockPoolData> &data,
-        uint64_t *igbp_id, int32_t *igbp_slot) {
+        const std::shared_ptr<_C2BlockPoolData>& data,
+        uint64_t* bqId, int32_t* bqSlot) {
     if (data && data->getType() == _C2BlockPoolData::TYPE_BUFFERQUEUE) {
-        const std::shared_ptr<const C2BufferQueueBlockPoolData> poolData =
-                std::static_pointer_cast<const C2BufferQueueBlockPoolData>(data);
-        poolData->getBufferQueueData(igbp_id, igbp_slot);
+        if (bqId) {
+            const std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+                    std::static_pointer_cast<C2BufferQueueBlockPoolData>(data);
+            *bqId = poolData->bqId;
+            if (bqSlot) {
+                *bqSlot = poolData->bqSlot;
+            }
+        }
         return true;
     }
     return false;
+}
+
+bool _C2BlockFactory::AssignBlockToBufferQueue(
+        const std::shared_ptr<_C2BlockPoolData>& data,
+        const sp<HGraphicBufferProducer>& igbp,
+        uint64_t bqId,
+        int32_t bqSlot,
+        bool held) {
+    if (data && data->getType() == _C2BlockPoolData::TYPE_BUFFERQUEUE) {
+        const std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+                std::static_pointer_cast<C2BufferQueueBlockPoolData>(data);
+        poolData->igbp = igbp;
+        poolData->bqId = bqId;
+        poolData->bqSlot = bqSlot;
+        poolData->held = held;
+        return true;
+    }
+    return false;
+}
+
+bool _C2BlockFactory::HoldBlockFromBufferQueue(
+        const std::shared_ptr<_C2BlockPoolData>& data,
+        const sp<HGraphicBufferProducer>& igbp) {
+    const std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+            std::static_pointer_cast<C2BufferQueueBlockPoolData>(data);
+    if (!poolData->local) {
+        poolData->igbp = igbp;
+    }
+    if (poolData->held) {
+        poolData->held = true;
+        return false;
+    }
+    poolData->held = true;
+    return true;
+}
+
+bool _C2BlockFactory::YieldBlockToBufferQueue(
+        const std::shared_ptr<_C2BlockPoolData>& data) {
+    const std::shared_ptr<C2BufferQueueBlockPoolData> poolData =
+            std::static_pointer_cast<C2BufferQueueBlockPoolData>(data);
+    if (!poolData->held) {
+        poolData->held = false;
+        return false;
+    }
+    poolData->held = false;
+    return true;
 }
 
 std::shared_ptr<C2GraphicBlock> _C2BlockFactory::CreateGraphicBlock(
@@ -393,23 +414,34 @@ private:
     sp<GraphicBuffer> mBuffers[NUM_BUFFER_SLOTS];
 };
 
-C2BufferQueueBlockPoolData::~C2BufferQueueBlockPoolData() {
-    if (mIgbpId == 0 || mConnected == false) {
-        return;
-    }
-    if (mLocal) {
-        auto lockedPool = mPool.lock();
-        if (lockedPool) {
-            lockedPool->cancel(mIgbpId, mIgbpSlot);
-        }
-    } else {
-        sp<HGraphicBufferProducer> producer = mProducer.promote();
-        if (producer) {
-            producer->cancelBuffer(mIgbpSlot, nullptr);
-        }
-    }
+C2BufferQueueBlockPoolData::C2BufferQueueBlockPoolData(
+        uint64_t bqId, int32_t bqSlot,
+        const sp<HGraphicBufferProducer>& producer) :
+        held(producer && bqId != 0), local(false),
+        bqId(bqId), bqSlot(bqSlot),
+        igbp(producer),
+        localPool() {
 }
 
+C2BufferQueueBlockPoolData::C2BufferQueueBlockPoolData(
+        uint64_t bqId, int32_t bqSlot,
+        const std::shared_ptr<C2BufferQueueBlockPool::Impl>& pool) :
+        held(true), local(true),
+        bqId(bqId), bqSlot(bqSlot),
+        igbp(pool ? pool->mProducer : nullptr),
+        localPool(pool) {
+}
+
+C2BufferQueueBlockPoolData::~C2BufferQueueBlockPoolData() {
+    if (!held || bqId == 0) {
+        return;
+    }
+    if (local && localPool) {
+        localPool->cancel(bqId, bqSlot);
+    } else if (igbp) {
+        igbp->cancelBuffer(bqSlot, nullptr);
+    }
+}
 
 C2BufferQueueBlockPool::C2BufferQueueBlockPool(
         const std::shared_ptr<C2Allocator> &allocator, const local_id_t localId)

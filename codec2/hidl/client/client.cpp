@@ -20,26 +20,29 @@
 
 #include <codec2/hidl/client.h>
 
-#include <hardware/google/media/c2/1.0/IComponentListener.h>
-#include <hardware/google/media/c2/1.0/IConfigurable.h>
-#include <hardware/google/media/c2/1.0/IComponentInterface.h>
-#include <hardware/google/media/c2/1.0/IComponent.h>
-#include <hardware/google/media/c2/1.0/IComponentStore.h>
-#include <android/hardware/media/bufferpool/1.0/IClientManager.h>
-
-#include <C2PlatformSupport.h>
-#include <C2BufferPriv.h>
-#include <C2Debug.h>
-#include <bufferpool/ClientManager.h>
-#include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
-#include <hidl/HidlSupport.h>
-#include <cutils/properties.h>
-
 #include <deque>
 #include <limits>
 #include <map>
 #include <type_traits>
 #include <vector>
+
+#include <bufferpool/ClientManager.h>
+#include <cutils/properties.h>
+#include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
+#include <hidl/HidlSupport.h>
+#include <media/stagefright/bqhelper/WGraphicBufferProducer.h>
+#undef LOG
+
+#include <android/hardware/media/bufferpool/1.0/IClientManager.h>
+#include <hardware/google/media/c2/1.0/IComponent.h>
+#include <hardware/google/media/c2/1.0/IComponentInterface.h>
+#include <hardware/google/media/c2/1.0/IComponentListener.h>
+#include <hardware/google/media/c2/1.0/IComponentStore.h>
+#include <hardware/google/media/c2/1.0/IConfigurable.h>
+
+#include <C2Debug.h>
+#include <C2BufferPriv.h>
+#include <C2PlatformSupport.h>
 
 namespace android {
 
@@ -47,6 +50,7 @@ using ::android::hardware::hidl_vec;
 using ::android::hardware::hidl_string;
 using ::android::hardware::Return;
 using ::android::hardware::Void;
+using ::android::TWGraphicBufferProducer;
 
 using namespace ::hardware::google::media::c2::V1_0;
 using namespace ::hardware::google::media::c2::V1_0::utils;
@@ -364,13 +368,7 @@ c2_status_t Codec2Client::createComponent(
             // release input buffers potentially held by the component from queue
             std::shared_ptr<Codec2Client::Component> strongComponent = component.lock();
             if (strongComponent) {
-                std::vector<uint64_t> inputDone;
-                for (const std::unique_ptr<C2Work> &work : workItems) {
-                    if (work) {
-                        inputDone.emplace_back(work->input.ordinal.frameIndex.peeku());
-                    }
-                }
-                strongComponent->handleOnWorkDone(inputDone);
+                strongComponent->handleOnWorkDone(workItems);
             }
             if (std::shared_ptr<Codec2Client::Listener> listener = base.lock()) {
                 listener->onWorkDone(component, workItems);
@@ -802,17 +800,39 @@ c2_status_t Codec2Client::Component::destroyBlockPool(
     return static_cast<c2_status_t>(static_cast<Status>(transResult));
 }
 
-void Codec2Client::Component::handleOnWorkDone(const std::vector<uint64_t> &inputDone) {
-    std::lock_guard<std::mutex> lock(mInputBuffersMutex);
-    for (uint64_t inputIndex : inputDone) {
-        auto it = mInputBuffers.find(inputIndex);
-        if (it == mInputBuffers.end()) {
-            ALOGI("unknown input index %llu in onWorkDone", (long long)inputIndex);
-        } else {
-            ALOGV("done with input index %llu with %zu buffers",
-                    (long long)inputIndex, it->second.size());
-            mInputBuffers.erase(it);
+void Codec2Client::Component::handleOnWorkDone(
+        const std::list<std::unique_ptr<C2Work>> &workItems) {
+    // Input buffers' lifetime management
+    std::vector<uint64_t> inputDone;
+    for (const std::unique_ptr<C2Work> &work : workItems) {
+        if (work) {
+            inputDone.emplace_back(work->input.ordinal.frameIndex.peeku());
         }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mInputBuffersMutex);
+        for (uint64_t inputIndex : inputDone) {
+            auto it = mInputBuffers.find(inputIndex);
+            if (it == mInputBuffers.end()) {
+                ALOGI("unknown input index %llu in onWorkDone", (long long)inputIndex);
+            } else {
+                ALOGV("done with input index %llu with %zu buffers",
+                        (long long)inputIndex, it->second.size());
+                mInputBuffers.erase(it);
+            }
+        }
+    }
+
+    // Output bufferqueue-based blocks' lifetime management
+    mOutputBufferQueueMutex.lock();
+    sp<IGraphicBufferProducer> igbp = mOutputIgbp;
+    uint64_t bqId = mOutputBqId;
+    uint32_t generation = mOutputGeneration;
+    mOutputBufferQueueMutex.unlock();
+
+    if (igbp) {
+        holdBufferQueueBlocks(workItems, igbp, bqId, generation);
     }
 }
 
@@ -886,6 +906,8 @@ c2_status_t Codec2Client::Component::flush(
             flushedIndices.emplace_back(work->input.ordinal.frameIndex.peeku());
         }
     }
+
+    // Input buffers' lifetime management
     for (uint64_t flushedIndex : flushedIndices) {
         std::lock_guard<std::mutex> lock(mInputBuffersMutex);
         auto it = mInputBuffers.find(flushedIndex);
@@ -896,6 +918,17 @@ c2_status_t Codec2Client::Component::flush(
                     (long long)flushedIndex, it->second.size());
             mInputBuffers.erase(it);
         }
+    }
+
+    // Output bufferqueue-based blocks' lifetime management
+    mOutputBufferQueueMutex.lock();
+    sp<IGraphicBufferProducer> igbp = mOutputIgbp;
+    uint64_t bqId = mOutputBqId;
+    uint32_t generation = mOutputGeneration;
+    mOutputBufferQueueMutex.unlock();
+
+    if (igbp) {
+        holdBufferQueueBlocks(*flushedWork, igbp, bqId, generation);
     }
 
     return status;
@@ -988,9 +1021,15 @@ c2_status_t Codec2Client::Component::release() {
 
 c2_status_t Codec2Client::Component::setOutputSurface(
         C2BlockPool::local_id_t blockPoolId,
-        const sp<IGraphicBufferProducer>& surface) {
+        const sp<IGraphicBufferProducer>& surface,
+        uint32_t generation) {
+    sp<HGraphicBufferProducer> igbp = surface->getHalInterface();
+    if (!igbp) {
+        igbp = new TWGraphicBufferProducer<HGraphicBufferProducer>(surface);
+    }
+
     Return<Status> transStatus = base()->setOutputSurface(
-            static_cast<uint64_t>(blockPoolId), surface);
+            static_cast<uint64_t>(blockPoolId), igbp);
     if (!transStatus.isOk()) {
         ALOGE("setOutputSurface -- transaction failed.");
         return C2_TRANSACTION_FAILED;
@@ -1000,13 +1039,91 @@ c2_status_t Codec2Client::Component::setOutputSurface(
     if (status != C2_OK) {
         ALOGE("setOutputSurface -- call failed. "
                 "Error code = %d", static_cast<int>(status));
+    } else {
+        std::lock_guard<std::mutex> lock(mOutputBufferQueueMutex);
+        if (mOutputIgbp != surface) {
+            mOutputIgbp = surface;
+            if (!surface) {
+                mOutputBqId = 0;
+            } else if (surface->getUniqueId(&mOutputBqId) != OK) {
+                ALOGE("setOutputSurface -- cannot obtain bufferqueue id.");
+            }
+        }
+        mOutputGeneration = generation;
     }
     return status;
 }
 
+status_t Codec2Client::Component::queueToOutputSurface(
+        const C2ConstGraphicBlock& block,
+        const QueueBufferInput& input,
+        QueueBufferOutput* output) {
+    uint64_t bqId;
+    int32_t bqSlot;
+    if (!getBufferQueueAssignment(block, &bqId, &bqSlot) || bqId == 0) {
+        // Block not from bufferqueue -- it must be attached before queuing.
+
+        mOutputBufferQueueMutex.lock();
+        sp<IGraphicBufferProducer> outputIgbp = mOutputIgbp;
+        uint32_t outputGeneration = mOutputGeneration;
+        mOutputBufferQueueMutex.unlock();
+
+        status_t status = !attachToBufferQueue(block,
+                                               outputIgbp,
+                                               outputGeneration,
+                                               &bqSlot);
+        if (status != OK) {
+            ALOGW("queueToOutputSurface -- attaching failed.");
+            return INVALID_OPERATION;
+        }
+
+        status = outputIgbp->queueBuffer(static_cast<int>(bqSlot),
+                                         input, output);
+        if (status != OK) {
+            ALOGE("queueToOutputSurface -- queueBuffer() failed "
+                    "on non-bufferqueue-based block. "
+                    "Error code = %d.",
+                    static_cast<int>(status));
+            return status;
+        }
+        return OK;
+    }
+
+    mOutputBufferQueueMutex.lock();
+    sp<IGraphicBufferProducer> outputIgbp = mOutputIgbp;
+    uint64_t outputBqId = mOutputBqId;
+    mOutputBufferQueueMutex.unlock();
+
+    if (!outputIgbp) {
+        ALOGE("queueToOutputSurface -- output surface is null.");
+        return NO_INIT;
+    }
+
+    if (bqId != outputBqId) {
+        ALOGE("queueToOutputSurface -- bufferqueue ids mismatch.");
+        return DEAD_OBJECT;
+    }
+
+    status_t status = outputIgbp->queueBuffer(static_cast<int>(bqSlot),
+                                              input, output);
+    if (status != OK) {
+        ALOGE("queueToOutputSurface -- queueBuffer() failed "
+                "on bufferqueue-based block. "
+                "Error code = %d.",
+                static_cast<int>(status));
+        return status;
+    }
+    if (!yieldBufferQueueBlock(block)) {
+        ALOGE("queueToOutputSurface -- cannot yield bufferqueue-based block "
+                "to the bufferqueue.");
+        return UNKNOWN_ERROR;
+    }
+    return OK;
+}
+
 c2_status_t Codec2Client::Component::connectToOmxInputSurface(
-        const sp<IGraphicBufferProducer>& producer,
-        const sp<IGraphicBufferSource>& source) {
+        const sp<HGraphicBufferProducer>& producer,
+        const sp<HGraphicBufferSource>& source) {
     Return<Status> transStatus = base()->connectToOmxInputSurface(
             producer, source);
     if (!transStatus.isOk()) {

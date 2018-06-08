@@ -64,12 +64,14 @@ public:
      */
     virtual void configureProducer(const android::sp<android::HGraphicBufferProducer> &producer);
 
-    class Impl;
 private:
     const std::shared_ptr<C2Allocator> mAllocator;
     const local_id_t mLocalId;
 
+    class Impl;
     std::shared_ptr<Impl> mImpl;
+
+    friend struct C2BufferQueueBlockPoolData;
 };
 
 #endif // STAGEFRIGHT_CODEC2_BUFFER_PRIV_H_

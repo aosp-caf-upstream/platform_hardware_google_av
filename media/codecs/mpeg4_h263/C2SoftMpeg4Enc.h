@@ -17,6 +17,9 @@
 #ifndef C2_SOFT_MPEG4_ENC_H__
 #define C2_SOFT_MPEG4_ENC_H__
 
+#include <map>
+
+#include <Codec2BufferUtils.h>
 #include <SimpleC2Component.h>
 
 #include "mp4enc_api.h"
@@ -62,8 +65,8 @@ private:
     int64_t  mNumInputFrames;
     MP4EncodingMode mEncodeMode;
 
-    std::list<std::unique_ptr<uint8_t[]>> mFreeConversionBuffers;
-    std::list<std::unique_ptr<uint8_t[]>> mConversionBuffersInUse;
+    MemoryBlockPool mConversionBuffers;
+    std::map<void *, MemoryBlock> mConversionBuffersInUse;
 
     c2_status_t initEncParams();
     c2_status_t initEncoder();
