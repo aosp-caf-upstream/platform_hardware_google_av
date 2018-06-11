@@ -1063,7 +1063,7 @@ public:
 
     sp<Codec2Buffer> wrap(const std::shared_ptr<C2Buffer> &buffer) override {
         if (buffer == nullptr) {
-            return new DummyContainerBuffer(mFormat, buffer);
+            return new LocalLinearBuffer(mFormat, new ABuffer(0));
         }
         if (buffer->data().type() != C2BufferData::LINEAR) {
             // We expect linear output buffers from the component.
