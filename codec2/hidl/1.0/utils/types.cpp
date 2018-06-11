@@ -255,12 +255,28 @@ Status objcpy(
         const C2Component::Traits &s) {
     d->name = s.name;
 
-    // TODO: Currently, we do not have any domain values defined in Codec2.0.
-    d->domain = IComponentStore::ComponentTraits::Domain::OTHER;
+    switch (s.domain) {
+    case C2Component::DOMAIN_VIDEO:
+        d->domain = IComponentStore::ComponentTraits::Domain::VIDEO;
+        break;
+    case C2Component::DOMAIN_AUDIO:
+        d->domain = IComponentStore::ComponentTraits::Domain::AUDIO;
+        break;
+    default:
+        d->domain = IComponentStore::ComponentTraits::Domain::OTHER;
+    }
     d->domainOther = static_cast<uint32_t>(s.domain);
 
-    // TODO: Currently, we do not have any kind values defined in Codec2.0.
-    d->kind = IComponentStore::ComponentTraits::Kind::OTHER;
+    switch (s.kind) {
+    case C2Component::KIND_DECODER:
+        d->kind = IComponentStore::ComponentTraits::Kind::DECODER;
+        break;
+    case C2Component::KIND_ENCODER:
+        d->kind = IComponentStore::ComponentTraits::Kind::ENCODER;
+        break;
+    default:
+        d->kind = IComponentStore::ComponentTraits::Kind::OTHER;
+    }
     d->kindOther = static_cast<uint32_t>(s.kind);
 
     d->rank = static_cast<uint32_t>(s.rank);
@@ -281,8 +297,29 @@ c2_status_t objcpy(
         std::unique_ptr<std::vector<std::string>>* aliasesBuffer,
         const IComponentStore::ComponentTraits& s) {
     d->name = s.name.c_str();
-    d->domain = static_cast<C2Component::domain_t>(s.domainOther);
-    d->kind = static_cast<C2Component::kind_t>(s.kindOther);
+
+    switch (s.domain) {
+    case IComponentStore::ComponentTraits::Domain::VIDEO:
+        d->domain = C2Component::DOMAIN_VIDEO;
+        break;
+    case IComponentStore::ComponentTraits::Domain::AUDIO:
+        d->domain = C2Component::DOMAIN_AUDIO;
+        break;
+    default:
+        d->domain = static_cast<C2Component::domain_t>(s.domainOther);
+    }
+
+    switch (s.kind) {
+    case IComponentStore::ComponentTraits::Kind::DECODER:
+        d->kind = C2Component::KIND_DECODER;
+        break;
+    case IComponentStore::ComponentTraits::Kind::ENCODER:
+        d->kind = C2Component::KIND_ENCODER;
+        break;
+    default:
+        d->kind = static_cast<C2Component::kind_t>(s.kindOther);
+    }
+
     d->rank = static_cast<C2Component::rank_t>(s.rank);
     d->mediaType = s.mediaType.c_str();
 
@@ -824,14 +861,13 @@ Status objcpy(FrameData* d, const C2FrameData& s,
 
 DefaultBufferPoolSender::DefaultBufferPoolSender(
         const sp<IClientManager>& receiverManager) :
-    mReceiverManager(receiverManager) {
+    mReceiverManager(receiverManager), mSourceConnectionId(0) {
 }
 
 void DefaultBufferPoolSender::setReceiver(const sp<IClientManager>& receiverManager) {
     std::lock_guard<std::mutex> lock(mMutex);
     if (mReceiverManager != receiverManager) {
         mReceiverManager = receiverManager;
-        mSourceAccessor = nullptr;
     }
 }
 
@@ -842,39 +878,30 @@ ResultStatus DefaultBufferPoolSender::send(
         ALOGE("No access to receiver's BufferPool.");
         return ResultStatus::NOT_FOUND;
     }
-
     ResultStatus rs;
     std::lock_guard<std::mutex> lock(mMutex);
-    sp<IAccessor> sourceAccessor = bpData->mAccessor.promote();
-    if (!mSourceAccessor || mSourceAccessor != sourceAccessor) {
-        // Initialize the bufferpool connection.
-        mSourceAccessor = sourceAccessor;
-        if (!mSourceAccessor) {
-            return ResultStatus::CRITICAL_ERROR;
-        }
-        Return<void> transResult = mReceiverManager->registerSender(
-                mSourceAccessor,
-                [&rs, this](
-                        ResultStatus status,
-                        int64_t connectionId) {
-                    rs = status;
-                    mReceiverConnectionId = connectionId;
-                });
-        if (!transResult.isOk()) {
-            ALOGE("registerSender -- failed transaction.");
-            mReceiverManager = nullptr;
-            return ResultStatus::CRITICAL_ERROR;
-        }
-        if ((rs != ResultStatus::OK) && (rs != ResultStatus::ALREADY_EXISTS)) {
-            ALOGW("registerSender -- returned error: %d.",
-                    static_cast<int>(rs));
-        }
-    }
     if (!mSenderManager) {
         mSenderManager = ClientManager::getInstance();
         if (!mSenderManager) {
             ALOGE("Failed to retrieve local BufferPool ClientManager.");
             return ResultStatus::CRITICAL_ERROR;
+        }
+    }
+    int64_t connectionId = bpData->mConnectionId;
+    if (mSourceConnectionId == 0 || mSourceConnectionId != connectionId) {
+        // Initialize the bufferpool connection.
+        mSourceConnectionId = connectionId;
+        if (mSourceConnectionId == 0) {
+            return ResultStatus::CRITICAL_ERROR;
+        }
+        int64_t receiverConnectionId;
+        rs = mSenderManager->registerSender(mReceiverManager, connectionId, &receiverConnectionId);
+        if ((rs != ResultStatus::OK) && (rs != ResultStatus::ALREADY_EXISTS)) {
+            ALOGW("registerSender -- returned error: %d.",
+                    static_cast<int>(rs));
+            return rs;
+        } else {
+            mReceiverConnectionId = receiverConnectionId;
         }
     }
 

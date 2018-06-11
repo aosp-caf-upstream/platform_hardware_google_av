@@ -1,3 +1,5 @@
+// DO NOT DEPEND ON THIS DIRECTLY
+// use libstagefright_codec2-hidl-defaults instead
 cc_library {
     name: "libcodec2_hidl_utils@1.0",
     vendor_available: true,
@@ -51,3 +53,13 @@ cc_library {
     ],
 }
 
+// public dependency for Codec 2.0 HAL service implementations
+cc_defaults {
+    name: "libstagefright_codec2-hidl-defaults",
+    defaults: ["libstagefright_codec2-impl-defaults"],
+
+    shared_libs: [
+        "hardware.google.media.c2@1.0",
+        "libcodec2_hidl_utils@1.0",
+    ],
+}

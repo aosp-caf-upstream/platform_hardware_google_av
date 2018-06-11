@@ -119,7 +119,7 @@ Return<void> CachedConfigurable::querySupportedParams(
         if (mSupportedParams[srcIx]) {
             objcpy(&params[dstIx++], *mSupportedParams[srcIx]);
         } else {
-            res = Status::CORRUPTED;
+            res = Status::BAD_INDEX;
         }
     }
     params.resize(dstIx);

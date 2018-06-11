@@ -27,7 +27,7 @@
 #include <C2V4l2Support.h>
 #include <Codec2Mapper.h>
 
-#include <cutils/properties.h>
+#include <android-base/properties.h>
 #include <media/stagefright/MediaCodecConstants.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 #include <media/stagefright/xmlparser/MediaCodecsXmlParser.h>
@@ -38,7 +38,46 @@ namespace android {
 
 using Traits = C2Component::Traits;
 
+namespace /* unnamed */ {
+
+bool hasPrefix(const std::string& s, const char* prefix) {
+    size_t prefixLen = strlen(prefix);
+    return s.compare(0, prefixLen, prefix) == 0;
+}
+
+bool hasSuffix(const std::string& s, const char* suffix) {
+    size_t suffixLen = strlen(suffix);
+    return suffixLen > s.size() ? false :
+            s.compare(s.size() - suffixLen, suffixLen, suffix) == 0;
+}
+
+} // unnamed namespace
+
 status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
+    // TODO: Remove run-time configurations once all codecs are working
+    // properly. (Assume "full" behavior eventually.)
+    //
+    // debug.stagefright.ccodec supports 5 values.
+    //   0 - Only OMX components are available.
+    //   1 - Codec2.0 software audio decoders are available and ranked 1st.
+    //       Components with "c2.vda." prefix are available with their normal
+    //       ranks.
+    //       Other components with ".avc.decoder" or ".avc.encoder" suffix are
+    //       available, but ranked last.
+    //   2 - All Codec2.0 components are available.
+    //       Codec2.0 software audio decoders are ranked 1st.
+    //       The other Codec2.0 components have their normal ranks.
+    //   3 - All Codec2.0 components are available.
+    //       Codec2.0 software components are ranked 1st.
+    //       The other Codec2.0 components have their normal ranks.
+    //   4 - All Codec2.0 components are available with their normal ranks.
+    //
+    // The default value (boot time) is 1.
+    //
+    // Note: Currently, OMX components have default rank 0x100, while all
+    // Codec2.0 software components have default rank 0x200.
+    int option = ::android::base::GetIntProperty("debug.stagefright.ccodec", 1);
+
     // Obtain Codec2Client
     std::vector<Traits> traits = Codec2Client::ListComponents();
 
@@ -54,6 +93,41 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
             ALOGD("%s not found in xml", trait.name.c_str());
             continue;
         }
+
+        // TODO: Remove this block once all codecs are enabled by default.
+        C2Component::rank_t rank = trait.rank;
+        switch (option) {
+        case 0:
+            continue;
+        case 1:
+            if (hasPrefix(trait.name, "c2.vda.")) {
+                break;
+            }
+            if (hasPrefix(trait.name, "c2.android.")) {
+                if (trait.domain == C2Component::DOMAIN_AUDIO &&
+                        trait.kind == C2Component::KIND_DECODER) {
+                    rank = 1;
+                    break;
+                }
+                continue;
+            }
+            if (hasSuffix(trait.name, ".avc.decoder") ||
+                    hasSuffix(trait.name, ".avc.encoder")) {
+                rank = std::numeric_limits<decltype(rank)>::max();
+                break;
+            }
+            continue;
+        case 2:
+            if (trait.domain == C2Component::DOMAIN_AUDIO &&
+                    trait.kind == C2Component::KIND_DECODER) {
+        case 3:
+                if (hasPrefix(trait.name, "c2.android.")) {
+                    rank = 1;
+                }
+            }
+            break;
+        }
+
         const MediaCodecsXmlParser::CodecProperties &codec = parser.getCodecMap().at(trait.name);
         std::unique_ptr<MediaCodecInfoWriter> codecInfo = writer->addMediaCodecInfo();
         codecInfo->setName(trait.name.c_str());
@@ -61,7 +135,7 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
         // TODO: get this from trait.kind
         bool encoder = (trait.name.find("encoder") != std::string::npos);
         codecInfo->setEncoder(encoder);
-        codecInfo->setRank(trait.rank);
+        codecInfo->setRank(rank);
         for (auto typeIt = codec.typeMap.begin(); typeIt != codec.typeMap.end(); ++typeIt) {
             const std::string &mediaType = typeIt->first;
             const MediaCodecsXmlParser::AttributeMap &attrMap = typeIt->second;

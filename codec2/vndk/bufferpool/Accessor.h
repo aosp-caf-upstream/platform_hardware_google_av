@@ -124,6 +124,15 @@ struct Accessor : public IAccessor {
      */
     ResultStatus close(ConnectionId connectionId);
 
+    /**
+     * Processes pending buffer status messages and perfoms periodic cache
+     * cleaning.
+     *
+     * @param clearCache    if clearCache is true, it frees all buffers waiting
+     *                      to be recycled.
+     */
+    void cleanUp(bool clearCache);
+
 private:
     class Impl;
     std::unique_ptr<Impl> mImpl;

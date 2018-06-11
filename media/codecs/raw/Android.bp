@@ -1,31 +1,9 @@
 cc_library_shared {
     name: "libstagefright_soft_c2rawdec",
-    vendor_available: true,
-
-    srcs: ["C2SoftRaw.cpp",],
-
-    cflags: [
-        "-Wall",
-        "-Werror",
+    defaults: [
+        "libstagefright_soft_c2-defaults",
+        "libstagefright_soft_c2_sanitize_all-defaults",
     ],
 
-    sanitize: {
-        misc_undefined: [
-            "signed-integer-overflow",
-            "unsigned-integer-overflow",
-        ],
-        cfi: true,
-        diag: {
-            cfi: true,
-        },
-    },
-
-    shared_libs: [
-        "liblog",
-        "libstagefright_codec2",
-        "libstagefright_codec2_vndk",
-        "libstagefright_foundation",
-        "libstagefright_simple_c2component",
-        "libutils",
-    ],
+    srcs: ["C2SoftRawDec.cpp"],
 }

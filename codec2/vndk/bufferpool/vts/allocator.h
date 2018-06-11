@@ -34,7 +34,8 @@ class VtsBufferPoolAllocator : public BufferPoolAllocator {
   ~VtsBufferPoolAllocator() override {}
 
   ResultStatus allocate(const std::vector<uint8_t> &params,
-                        std::shared_ptr<BufferPoolAllocation> *alloc) override;
+                        std::shared_ptr<BufferPoolAllocation> *alloc,
+                        size_t *allocSize) override;
 
   bool compatible(const std::vector<uint8_t> &newParams,
                   const std::vector<uint8_t> &oldParams) override;

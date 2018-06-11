@@ -37,13 +37,20 @@
 
 namespace android {
 
+class CCodecCallback {
+public:
+    virtual ~CCodecCallback() = default;
+    virtual void onError(status_t err, enum ActionCode actionCode) = 0;
+    virtual void onOutputFramesRendered(int64_t mediaTimeUs, nsecs_t renderTimeNs) = 0;
+};
+
 /**
  * BufferChannelBase implementation for CCodec.
  */
 class CCodecBufferChannel
     : public BufferChannelBase, public std::enable_shared_from_this<CCodecBufferChannel> {
 public:
-    CCodecBufferChannel(const std::function<void(status_t, enum ActionCode)> &onError);
+    explicit CCodecBufferChannel(const std::shared_ptr<CCodecCallback> &callback);
     virtual ~CCodecBufferChannel();
 
     // BufferChannelBase interface
@@ -105,8 +112,12 @@ public:
      * Notify input client about work done.
      *
      * @param workItems   finished work item.
+     * @param outputFormat new output format if it has changed, otherwise nullptr
+     * @param initData    new init data (CSD) if it has changed, otherwise nullptr
      */
-    void onWorkDone(std::unique_ptr<C2Work> work);
+    void onWorkDone(
+            std::unique_ptr<C2Work> work, const sp<AMessage> &outputFormat,
+            const C2StreamInitDataInfo::output *initData);
 
     enum MetaMode {
         MODE_NONE,
@@ -173,7 +184,11 @@ private:
     };
 
     void feedInputBufferIfAvailable();
+    void feedInputBufferIfAvailableInternal();
     status_t queueInputBufferInternal(const sp<MediaCodecBuffer> &buffer);
+    bool handleWork(
+            std::unique_ptr<C2Work> work, const sp<AMessage> &outputFormat,
+            const C2StreamInitDataInfo::output *initData);
 
     QueueSync mSync;
     sp<MemoryDealer> mDealer;
@@ -181,7 +196,7 @@ private:
     int32_t mHeapSeqNum;
 
     std::shared_ptr<Codec2Client::Component> mComponent;
-    std::function<void(status_t, enum ActionCode)> mOnError;
+    std::shared_ptr<CCodecCallback> mCCodecCallback;
     std::shared_ptr<C2BlockPool> mInputAllocator;
     QueueSync mQueueSync;
 
@@ -195,20 +210,24 @@ private:
 
     struct OutputSurface {
         sp<Surface> surface;
-        std::list<std::shared_ptr<C2Buffer>> bufferRefs;
-        size_t maxBufferCount;
+        uint32_t generation;
     };
     Mutexed<OutputSurface> mOutputSurface;
     std::unique_ptr<OutputBufferQueue> mOutputBufferQueue;
 
-    struct InputRefs {
-        std::map<unsigned long long, std::shared_ptr<C2Buffer>> bufferRefs;
+    struct BlockPools {
+        C2Allocator::id_t inputAllocatorId;
+        std::shared_ptr<C2BlockPool> inputPool;
+        C2Allocator::id_t outputAllocatorId;
+        C2BlockPool::local_id_t outputPoolId;
+        std::shared_ptr<Codec2Client::Configurable> outputPoolIntf;
     };
-    Mutexed<InputRefs> mInputRefs;
+    Mutexed<BlockPools> mBlockPools;
 
     std::shared_ptr<InputSurfaceWrapper> mInputSurface;
 
     MetaMode mMetaMode;
+    std::atomic_int32_t mPendingFeed;
 
     inline bool hasCryptoOrDescrambler() {
         return mCrypto != NULL || mDescrambler != NULL;

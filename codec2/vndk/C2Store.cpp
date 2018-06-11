@@ -299,12 +299,25 @@ public:
 
         switch(allocatorId) {
             case C2PlatformAllocatorStore::ION:
+            case C2AllocatorStore::DEFAULT_LINEAR:
                 res = allocatorStore->fetchAllocator(
                         C2AllocatorStore::DEFAULT_LINEAR, &allocator);
                 if (res == C2_OK) {
                     std::shared_ptr<C2BlockPool> ptr =
                             std::make_shared<C2PooledBlockPool>(
                                     allocator, poolId);
+                    *pool = ptr;
+                    mBlockPools[poolId] = ptr;
+                    mComponents[poolId] = component;
+                }
+                break;
+            case C2PlatformAllocatorStore::GRALLOC:
+            case C2AllocatorStore::DEFAULT_GRAPHIC:
+                res = allocatorStore->fetchAllocator(
+                        C2AllocatorStore::DEFAULT_GRAPHIC, &allocator);
+                if (res == C2_OK) {
+                    std::shared_ptr<C2BlockPool> ptr =
+                        std::make_shared<C2PooledBlockPool>(allocator, poolId);
                     *pool = ptr;
                     mBlockPools[poolId] = ptr;
                     mComponents[poolId] = component;
@@ -721,6 +734,22 @@ std::shared_ptr<const C2Component::Traits> C2PlatformComponentStore::ComponentMo
             traits->mediaType = mediaTypeConfig->m.value;
             // TODO: get this properly.
             traits->rank = 0x200;
+
+            // TODO: define these values properly
+            bool decoder = (traits->name.find("decoder") != std::string::npos);
+            traits->kind =
+                    decoder ? C2Component::KIND_DECODER :
+                    encoder ? C2Component::KIND_ENCODER :
+                    C2Component::KIND_OTHER;
+            if (strncmp(traits->mediaType.c_str(), "audio/", 6) == 0) {
+                traits->domain = C2Component::DOMAIN_AUDIO;
+            } else if (strncmp(traits->mediaType.c_str(), "video/", 6) == 0) {
+                traits->domain = C2Component::DOMAIN_VIDEO;
+            } else if (strncmp(traits->mediaType.c_str(), "image/", 6) == 0) {
+                traits->domain = C2Component::DOMAIN_IMAGE;
+            } else {
+                traits->domain = C2Component::DOMAIN_OTHER;
+            }
         }
 
         mTraits = traits;
@@ -759,6 +788,7 @@ C2PlatformComponentStore::C2PlatformComponentStore()
     mComponents.emplace("c2.android.flac.decoder", "libstagefright_soft_c2flacdec.so");
     mComponents.emplace("c2.android.flac.encoder", "libstagefright_soft_c2flacenc.so");
     mComponents.emplace("c2.android.gsm.decoder", "libstagefright_soft_c2gsmdec.so");
+    mComponents.emplace("c2.android.xaac.decoder", "libstagefright_soft_c2xaacdec.so");
 }
 
 c2_status_t C2PlatformComponentStore::copyBuffer(

@@ -22,6 +22,7 @@
 #include <thread>
 
 #include <C2Config.h>
+#include <C2Debug.h>
 #include <C2ParamInternal.h>
 #include <C2PlatformSupport.h>
 #include <C2V4l2Support.h>
@@ -35,6 +36,7 @@
 #include <media/omx/1.0/WOmx.h>
 #include <media/stagefright/codec2/1.0/InputSurface.h>
 #include <media/stagefright/BufferProducerWrapper.h>
+#include <media/stagefright/MediaCodecConstants.h>
 #include <media/stagefright/PersistentSurface.h>
 
 #include "C2OMXNode.h"
@@ -232,6 +234,69 @@ private:
     uint32_t mHeight;
 };
 
+class Codec2ClientInterfaceWrapper : public C2ComponentStore {
+    std::shared_ptr<Codec2Client> mClient;
+
+public:
+    Codec2ClientInterfaceWrapper(std::shared_ptr<Codec2Client> client)
+        : mClient(client) { }
+
+    virtual ~Codec2ClientInterfaceWrapper() = default;
+
+    virtual c2_status_t config_sm(
+            const std::vector<C2Param *> &params,
+            std::vector<std::unique_ptr<C2SettingResult>> *const failures) {
+        return mClient->config(params, C2_MAY_BLOCK, failures);
+    };
+
+    virtual c2_status_t copyBuffer(
+            std::shared_ptr<C2GraphicBuffer>,
+            std::shared_ptr<C2GraphicBuffer>) {
+        return C2_OMITTED;
+    }
+
+    virtual c2_status_t createComponent(
+            C2String, std::shared_ptr<C2Component> *const component) {
+        component->reset();
+        return C2_OMITTED;
+    }
+
+    virtual c2_status_t createInterface(
+            C2String, std::shared_ptr<C2ComponentInterface> *const interface) {
+        interface->reset();
+        return C2_OMITTED;
+    }
+
+    virtual c2_status_t query_sm(
+            const std::vector<C2Param *> &stackParams,
+            const std::vector<C2Param::Index> &heapParamIndices,
+            std::vector<std::unique_ptr<C2Param>> *const heapParams) const {
+        return mClient->query(stackParams, heapParamIndices, C2_MAY_BLOCK, heapParams);
+    }
+
+    virtual c2_status_t querySupportedParams_nb(
+            std::vector<std::shared_ptr<C2ParamDescriptor>> *const params) const {
+        return mClient->querySupportedParams(params);
+    }
+
+    virtual c2_status_t querySupportedValues_sm(
+            std::vector<C2FieldSupportedValuesQuery> &fields) const {
+        return mClient->querySupportedValues(fields, C2_MAY_BLOCK);
+    }
+
+    virtual C2String getName() const {
+        return mClient->getName();
+    }
+
+    virtual std::shared_ptr<C2ParamReflector> getParamReflector() const {
+        return mClient->getParamReflector();
+    }
+
+    virtual std::vector<std::shared_ptr<const C2Component::Traits>> listComponents() {
+        return std::vector<std::shared_ptr<const C2Component::Traits>>();
+    }
+};
+
 }  // namespace
 
 // CCodec::ClientListener
@@ -297,14 +362,31 @@ private:
     wp<CCodec> mCodec;
 };
 
+// CCodecCallbackImpl
+
+class CCodecCallbackImpl : public CCodecCallback {
+public:
+    explicit CCodecCallbackImpl(CCodec *codec) : mCodec(codec) {}
+    ~CCodecCallbackImpl() override = default;
+
+    void onError(status_t err, enum ActionCode actionCode) override {
+        mCodec->mCallback->onError(err, actionCode);
+    }
+
+    void onOutputFramesRendered(int64_t mediaTimeUs, nsecs_t renderTimeNs) override {
+        mCodec->mCallback->onOutputFramesRendered(
+                {RenderedFrameInfo(mediaTimeUs, renderTimeNs)});
+    }
+
+private:
+    CCodec *mCodec;
+};
+
 // CCodec
 
 CCodec::CCodec()
-    : mChannel(new CCodecBufferChannel([this] (status_t err, enum ActionCode actionCode) {
-          mCallback->onError(err, actionCode);
-      })) {
+    : mChannel(new CCodecBufferChannel(std::make_shared<CCodecCallbackImpl>(this))) {
     CCodecWatchdog::getInstance()->registerCodec(this);
-    initializeStandardParams();
 }
 
 CCodec::~CCodec() {
@@ -354,6 +436,15 @@ void CCodec::allocate(const sp<MediaCodecInfo> &codecInfo) {
 
     AString componentName = codecInfo->getCodecName();
     std::shared_ptr<Codec2Client> client;
+
+    // set up preferred component store to access vendor store parameters
+    client = Codec2Client::CreateFromService("default", false);
+    if (client) {
+        ALOGI("setting up '%s' as default (vendor) store", client->getInstanceName().c_str());
+        SetPreferredCodec2ComponentStore(
+                std::make_shared<Codec2ClientInterfaceWrapper>(client));
+    }
+
     std::shared_ptr<Codec2Client::Component> comp =
             Codec2Client::CreateComponentByName(
             componentName.c_str(),
@@ -368,7 +459,7 @@ void CCodec::allocate(const sp<MediaCodecInfo> &codecInfo) {
         state.lock();
         return;
     }
-    ALOGV("Success Create component: %s", componentName.c_str());
+    ALOGI("Created component [%s]", componentName.c_str());
     mChannel->setComponent(comp);
     auto setAllocated = [this, comp, client] {
         Mutexed<State>::Locked state(mState);
@@ -384,6 +475,16 @@ void CCodec::allocate(const sp<MediaCodecInfo> &codecInfo) {
     if (tryAndReportOnError(setAllocated) != OK) {
         return;
     }
+
+    // initialize config here in case setParameters is called prior to configure
+    Mutexed<Config>::Locked config(mConfig);
+    status_t err = config->initialize(mClient, comp);
+    if (err != OK) {
+        ALOGW("Failed to initialize configuration support");
+        // TODO: report error once we complete implementation.
+    }
+    config->queryConfiguration(comp);
+
     mCallback->onComponentAllocated(comp->getName().c_str());
 }
 
@@ -416,18 +517,7 @@ void CCodec::configure(const sp<AMessage> &msg) {
         return;
     }
 
-    sp<AMessage> inputFormat(new AMessage);
-    sp<AMessage> outputFormat(new AMessage);
-    std::vector<std::shared_ptr<C2ParamDescriptor>> paramDescs;
-
-    auto doConfig = [=, paramDescsPtr = &paramDescs] {
-        c2_status_t c2err = comp->querySupportedParams(paramDescsPtr);
-        if (c2err != C2_OK) {
-            ALOGD("Failed to query supported params");
-            // TODO: return error once we complete implementation.
-            // return UNKNOWN_ERROR;
-        }
-
+    auto doConfig = [msg, comp, this]() -> status_t {
         AString mime;
         if (!msg->findString("mime", &mime)) {
             return BAD_VALUE;
@@ -436,6 +526,11 @@ void CCodec::configure(const sp<AMessage> &msg) {
         int32_t encoder;
         if (!msg->findInt32("encoder", &encoder)) {
             encoder = false;
+        }
+
+        // TODO: read from intf()
+        if ((!encoder) != (comp->getName().find("encoder") == std::string::npos)) {
+            return UNKNOWN_ERROR;
         }
 
         int32_t storeMeta;
@@ -449,25 +544,35 @@ void CCodec::configure(const sp<AMessage> &msg) {
             mChannel->setMetaMode(CCodecBufferChannel::MODE_ANW);
         }
 
-        // TODO: read from intf()
-        if ((!encoder) != (comp->getName().find("encoder") == std::string::npos)) {
-            return UNKNOWN_ERROR;
-        }
-
         sp<RefBase> obj;
         if (msg->findObject("native-window", &obj)) {
             sp<Surface> surface = static_cast<Surface *>(obj.get());
             setSurface(surface);
         }
 
+        Mutexed<Config>::Locked config(mConfig);
+        std::vector<std::unique_ptr<C2Param>> configUpdate;
+        status_t err = config->getConfigUpdateFromSdkParams(
+                comp, msg, Config::CONFIG, C2_DONT_BLOCK, &configUpdate);
+        if (err != OK) {
+            ALOGW("failed to convert configuration to c2 params");
+        }
+        err = config->setParameters(comp, configUpdate, C2_DONT_BLOCK);
+        if (err != OK) {
+            ALOGW("failed to configure c2 params");
+            return err;
+        }
+
         std::vector<std::unique_ptr<C2Param>> params;
-        C2StreamUsageTuning::input usage(0u);
+        C2StreamUsageTuning::input usage(0u, 0u);
+        C2StreamMaxBufferSizeInfo::input maxInputSize(0u, 0u);
+        // TEMP: get max input size from format (in case component is not exposing this)
+        (void)msg->findInt32(KEY_MAX_INPUT_SIZE, (int32_t*)&maxInputSize.value);
+
         std::initializer_list<C2Param::Index> indices {
-            C2PortMimeConfig::input::PARAM_TYPE,
-            C2PortMimeConfig::output::PARAM_TYPE,
         };
-        c2err = comp->query(
-                {&usage},
+        c2_status_t c2err = comp->query(
+                { &usage, &maxInputSize },
                 indices,
                 C2_DONT_BLOCK,
                 &params);
@@ -480,74 +585,48 @@ void CCodec::configure(const sp<AMessage> &msg) {
                     indices.size(), params.size());
             return UNKNOWN_ERROR;
         }
-        if (!params[0] || !params[1]) {
-            ALOGE("Component returns null params");
-            return UNKNOWN_ERROR;
-        }
-        if (!*params[0] || !*params[1]) {
-            ALOGE("Component returns invalid params");
-            return UNKNOWN_ERROR;
-        }
-        inputFormat->setString("mime", ((C2PortMimeConfig *)params[0].get())->m.value);
-        outputFormat->setString("mime", ((C2PortMimeConfig *)params[1].get())->m.value);
         if (usage && (usage.value & C2MemoryUsage::CPU_READ)) {
-            inputFormat->setInt32("using-sw-read-often", true);
+            config->mInputFormat->setInt32("using-sw-read-often", true);
         }
 
-        // XXX: hack
-        bool audio = mime.startsWithIgnoreCase("audio/");
-        if (!audio) {
-            int32_t width, height;
-            if (msg->findInt32("width", &width) && msg->findInt32("height", &height)) {
-                inputFormat->setInt32("width", width);
-                inputFormat->setInt32("height", height);
-                inputFormat->setRect("crop", 0, 0, width - 1, height - 1);
-                outputFormat->setInt32("width", width);
-                outputFormat->setInt32("height", height);
-                outputFormat->setRect("crop", 0, 0, width - 1, height - 1);
-            }
-        } else {
-            int32_t channelCount, sampleRate;
-            if (msg->findInt32("channel-count", &channelCount)
-                    && msg->findInt32("sample-rate", &sampleRate)) {
-                inputFormat->setInt32("channel-count", channelCount);
-                inputFormat->setInt32("sample-rate", sampleRate);
-                outputFormat->setInt32("channel-count", channelCount);
-                outputFormat->setInt32("sample-rate", sampleRate);
-            }
+        // TEMP: enforce minimum buffer size of 1MB for video decoders
+        if (!encoder && !(config->mDomain & Config::IS_AUDIO)) {
+            maxInputSize.value = c2_max(1048576u, maxInputSize.value);
         }
 
         // TODO: do this based on component requiring linear allocator for input
-        if (!encoder || audio) {
-            int32_t tmp;
-            if (msg->findInt32("max-input-size", &tmp)) {
-                inputFormat->setInt32(C2_NAME_STREAM_MAX_BUFFER_SIZE_SETTING, tmp);
+        if ((config->mDomain & Config::IS_DECODER) || (config->mDomain & Config::IS_AUDIO)) {
+            // Pass max input size on input format to the buffer channel (if supplied by the
+            // component or by a default)
+            if (maxInputSize.value) {
+                config->mInputFormat->setInt32(
+                        KEY_MAX_INPUT_SIZE, (int32_t)(c2_min(maxInputSize.value, uint32_t(INT32_MAX))));
             }
         }
 
-        // TODO
+        if ((config->mDomain & Config::IS_DECODER) && (config->mDomain & Config::IS_AUDIO)) {
+            int delay = 0;
+            if (msg->findInt32("encoder-delay", &delay)) {
+                config->mOutputFormat->setInt32("encoder-delay", delay);
+            }
+            int padding = 0;
+            if (msg->findInt32("encoder-padding", &padding)) {
+                config->mOutputFormat->setInt32("encoder-padding", padding);
+            }
+        }
 
+        ALOGD("setup formats input: %s and output: %s",
+                config->mInputFormat->debugString().c_str(),
+                config->mOutputFormat->debugString().c_str());
         return OK;
     };
     if (tryAndReportOnError(doConfig) != OK) {
         return;
     }
 
-    {
-        Mutexed<Formats>::Locked formats(mFormats);
-        formats->inputFormat = inputFormat;
-        formats->outputFormat = outputFormat;
-    }
-    std::shared_ptr<C2ParamReflector> reflector = mClient->getParamReflector();
-    if (reflector != nullptr) {
-        Mutexed<ReflectedParamUpdater>::Locked paramUpdater(mParamUpdater);
-        paramUpdater->clear();
-        paramUpdater->addParamDesc(reflector, paramDescs);
-    } else {
-        ALOGE("Failed to get param reflector");
-        // TODO: report error once we complete implementation.
-    }
-    mCallback->onComponentConfigured(inputFormat, outputFormat);
+    Mutexed<Config>::Locked config(mConfig);
+
+    mCallback->onComponentConfigured(config->mInputFormat, config->mOutputFormat);
 }
 
 void CCodec::initiateCreateInputSurface() {
@@ -577,9 +656,9 @@ void CCodec::createInputSurface() {
     sp<AMessage> inputFormat;
     sp<AMessage> outputFormat;
     {
-        Mutexed<Formats>::Locked formats(mFormats);
-        inputFormat = formats->inputFormat;
-        outputFormat = formats->outputFormat;
+        Mutexed<Config>::Locked config(mConfig);
+        inputFormat = config->mInputFormat;
+        outputFormat = config->mOutputFormat;
     }
 
     // TODO: Remove this property check and assume it's always true.
@@ -656,9 +735,9 @@ void CCodec::setInputSurface(const sp<PersistentSurface> &surface) {
     sp<AMessage> inputFormat;
     sp<AMessage> outputFormat;
     {
-        Mutexed<Formats>::Locked formats(mFormats);
-        inputFormat = formats->inputFormat;
-        outputFormat = formats->outputFormat;
+        Mutexed<Config>::Locked config(mConfig);
+        inputFormat = config->mInputFormat;
+        outputFormat = config->mOutputFormat;
     }
     int32_t width = 0;
     (void)outputFormat->findInt32("width", &width);
@@ -713,9 +792,9 @@ void CCodec::start() {
     sp<AMessage> inputFormat;
     sp<AMessage> outputFormat;
     {
-        Mutexed<Formats>::Locked formats(mFormats);
-        inputFormat = formats->inputFormat;
-        outputFormat = formats->outputFormat;
+        Mutexed<Config>::Locked config(mConfig);
+        inputFormat = config->mInputFormat;
+        outputFormat = config->mOutputFormat;
     }
     status_t err2 = mChannel->start(inputFormat, outputFormat);
     if (err2 != OK) {
@@ -761,6 +840,7 @@ void CCodec::initiateStop() {
         state->set(STOPPING);
     }
 
+    mChannel->stop();
     (new AMessage(kWhatStop, this))->post();
 }
 
@@ -782,7 +862,6 @@ void CCodec::stop() {
         }
         comp = state->comp;
     }
-    mChannel->stop();
     status_t err = comp->stop();
     if (err != C2_OK) {
         // TODO: convert err into status_t
@@ -823,6 +902,7 @@ void CCodec::initiateRelease(bool sendCallback /* = true */) {
         state->set(RELEASING);
     }
 
+    mChannel->stop();
     std::thread([this, sendCallback] { release(sendCallback); }).detach();
 }
 
@@ -840,7 +920,6 @@ void CCodec::release(bool sendCallback) {
         }
         comp = state->comp;
     }
-    mChannel->stop();
     comp->release();
 
     {
@@ -880,6 +959,7 @@ void CCodec::signalFlush() {
             return;
     }
 
+    mChannel->stop();
     (new AMessage(kWhatFlush, this))->post();
 }
 
@@ -896,8 +976,6 @@ void CCodec::flush() {
     if (tryAndReportOnError(checkFlushing) != OK) {
         return;
     }
-
-    mChannel->stop();
 
     std::list<std::unique_ptr<C2Work>> flushedWork;
     c2_status_t err = comp->flush(C2Component::FLUSH_COMPONENT, &flushedWork);
@@ -948,90 +1026,7 @@ void CCodec::signalSetParameters(const sp<AMessage> &params) {
     msg->post();
 }
 
-void CCodec::initializeStandardParams() {
-    mStandardParams.emplace("bitrate",          "coded.bitrate.value");
-    mStandardParams.emplace("video-bitrate",    "coded.bitrate.value");
-    mStandardParams.emplace("bitrate-mode",     "coded.bitrate-mode.value");
-    mStandardParams.emplace("frame-rate",       "coded.frame-rate.value");
-    mStandardParams.emplace("max-input-size",   "coded.max-frame-size.value");
-    mStandardParams.emplace("rotation-degrees", "coded.vui.rotation.value");
-
-    mStandardParams.emplace("prepend-sps-pps-to-idr-frames", "coding.add-csd-to-sync-frames.value");
-    mStandardParams.emplace("i-frame-period",   "coding.gop.intra-period");
-    mStandardParams.emplace("intra-refresh-period", "coding.intra-refresh.period");
-    mStandardParams.emplace("quality",          "coding.quality.value");
-    mStandardParams.emplace("request-sync",     "coding.request-sync.value");
-
-    mStandardParams.emplace("operating-rate",   "ctrl.operating-rate.value");
-    mStandardParams.emplace("priority",         "ctrl.priority.value");
-
-    mStandardParams.emplace("channel-count",    "raw.channel-count.value");
-    mStandardParams.emplace("max-width",        "raw.max-size.width");
-    mStandardParams.emplace("max-height",       "raw.max-size.height");
-    mStandardParams.emplace("pcm-encoding",     "raw.pcm-encoding.value");
-    mStandardParams.emplace("color-format",     "raw.pixel-format.value");
-    mStandardParams.emplace("sample-rate",      "raw.sample-rate.value");
-    mStandardParams.emplace("width",            "raw.size.width");
-    mStandardParams.emplace("height",           "raw.size.height");
-
-    mStandardParams.emplace("is-adts",          "coded.aac-stream-format.value");
-
-    // mStandardParams.emplace("stride", "raw.??");
-    // mStandardParams.emplace("slice-height", "raw.??");
-}
-
-sp<AMessage> CCodec::filterParameters(const sp<AMessage> &params) const {
-    sp<AMessage> filtered = params->dup();
-
-    // TODO: some params may require recalculation or a type fix
-    // e.g. i-frame-interval here
-    {
-        int32_t frameRateInt;
-        if (filtered->findInt32("frame-rate", &frameRateInt)) {
-            filtered->removeEntryAt(filtered->findEntryByName("frame-rate"));
-            filtered->setFloat("frame-rate", frameRateInt);
-        }
-    }
-
-    {
-        float frameRate;
-        int32_t iFrameInterval;
-        if (filtered->findInt32("i-frame-interval", &iFrameInterval)
-                && filtered->findFloat("frame-rate", &frameRate)) {
-            filtered->setInt32("i-frame-period", iFrameInterval * frameRate + 0.5);
-        }
-    }
-
-    {
-        int32_t isAdts;
-        if (filtered->findInt32("is-adts", &isAdts)) {
-            filtered->setInt32(
-                    "is-adts",
-                    isAdts ? C2AacStreamFormatAdts : C2AacStreamFormatRaw);
-        }
-    }
-
-    for (size_t ix = 0; ix < filtered->countEntries();) {
-        AMessage::Type type;
-        AString name = filtered->getEntryNameAt(ix, &type);
-        if (name.startsWith("vendor.")) {
-            // vendor params pass through as is
-            ++ix;
-            continue;
-        }
-        auto it = mStandardParams.find(name.c_str());
-        if (it == mStandardParams.end()) {
-            // non-standard parameters are filtered out
-            filtered->removeEntryAt(ix);
-            continue;
-        }
-        filtered->setEntryNameAt(ix++, it->second.c_str());
-    }
-    ALOGV("filtered %s to %s", params->debugString(4).c_str(), filtered->debugString(4).c_str());
-    return filtered;
-}
-
-void CCodec::setParameters(const sp<AMessage> &unfiltered) {
+void CCodec::setParameters(const sp<AMessage> &params) {
     std::shared_ptr<Codec2Client::Component> comp;
     auto checkState = [this, &comp] {
         Mutexed<State>::Locked state(mState);
@@ -1045,40 +1040,13 @@ void CCodec::setParameters(const sp<AMessage> &unfiltered) {
         return;
     }
 
-    sp<AMessage> params = filterParameters(unfiltered);
-
-    c2_status_t err = C2_OK;
-    std::vector<std::unique_ptr<C2Param>> vec;
-    {
-        Mutexed<ReflectedParamUpdater>::Locked paramUpdater(mParamUpdater);
-        std::vector<C2Param::Index> indices;
-        paramUpdater->getParamIndicesFromMessage(params, &indices);
-
-        paramUpdater.unlock();
-        if (indices.empty()) {
-            ALOGD("no recognized params in: %s", params->debugString().c_str());
-            return;
-        }
-        err = comp->query({}, indices, C2_MAY_BLOCK, &vec);
-        if (err != C2_OK) {
-            ALOGD("query failed with %d", err);
-            // This is non-fatal.
-            return;
-        }
-        paramUpdater.lock();
-
-        paramUpdater->updateParamsFromMessage(params, &vec);
-    }
-
-    std::vector<C2Param *> paramVector;
-    for (const std::unique_ptr<C2Param> &param : vec) {
-        paramVector.push_back(param.get());
-    }
-    std::vector<std::unique_ptr<C2SettingResult>> failures;
-    err = comp->config(paramVector, C2_MAY_BLOCK, &failures);
-    if (err != C2_OK) {
-        ALOGD("config failed with %d", err);
-        // This is non-fatal.
+    Mutexed<Config>::Locked config(mConfig);
+    std::vector<std::unique_ptr<C2Param>> configUpdate;
+    (void)config->getConfigUpdateFromSdkParams(comp, params, Config::PARAM, C2_MAY_BLOCK, &configUpdate);
+    if (property_get_bool("debug.stagefright.ccodec_delayed_params", false)) {
+        // mChannel->queueConfigUpdate(configUpdate);
+    } else {
+        (void)config->setParameters(comp, configUpdate, C2_MAY_BLOCK);
     }
 }
 
@@ -1113,7 +1081,6 @@ void CCodec::onMessageReceived(const sp<AMessage> &msg) {
             sp<AMessage> format;
             CHECK(msg->findMessage("format", &format));
             configure(format);
-            setParameters(format);
             break;
         }
         case kWhatStart: {
@@ -1169,7 +1136,69 @@ void CCodec::onMessageReceived(const sp<AMessage> &msg) {
                     (new AMessage(kWhatWorkDone, this))->post();
                 }
             }
-            mChannel->onWorkDone(std::move(work));
+
+            // handle configuration changes in work done
+            Mutexed<Config>::Locked config(mConfig);
+            bool changed = false;
+            Config::Watcher<C2StreamInitDataInfo::output> initData =
+                config->watch<C2StreamInitDataInfo::output>();
+            if (!work->worklets.empty()
+                    && (work->worklets.front()->output.flags
+                            & C2FrameData::FLAG_DISCARD_FRAME) == 0) {
+
+                // copy buffer info to config
+                std::vector<std::unique_ptr<C2Param>> updates =
+                    std::move(work->worklets.front()->output.configUpdate);
+                unsigned stream = 0;
+                for (const std::shared_ptr<C2Buffer> &buf : work->worklets.front()->output.buffers) {
+                    for (const std::shared_ptr<const C2Info> &info : buf->info()) {
+                        // move all info into output-stream #0 domain
+                        updates.emplace_back(C2Param::CopyAsStream(*info, true /* output */, stream));
+                    }
+                    for (const C2ConstGraphicBlock &block : buf->data().graphicBlocks()) {
+                        // ALOGV("got output buffer with crop %u,%u+%u,%u and size %u,%u",
+                        //      block.crop().left, block.crop().top,
+                        //      block.crop().width, block.crop().height,
+                        //      block.width(), block.height());
+                        updates.emplace_back(new C2StreamCropRectInfo::output(stream, block.crop()));
+                        updates.emplace_back(new C2StreamPictureSizeInfo::output(
+                                stream, block.width(), block.height()));
+                        break; // for now only do the first block
+                    }
+                    ++stream;
+                }
+
+                changed = config->updateConfiguration(updates, config->mOutputDomain);
+
+                // copy standard infos to graphic buffers if not already present (otherwise, we
+                // may overwrite the actual intermediate value with a final value)
+                stream = 0;
+                const static std::vector<C2Param::Index> stdGfxInfos = {
+                    C2StreamRotationInfo::output::PARAM_TYPE,
+                    C2StreamColorAspectsInfo::output::PARAM_TYPE,
+                    C2StreamHdrStaticInfo::output::PARAM_TYPE,
+                    C2StreamPixelAspectRatioInfo::output::PARAM_TYPE,
+                    C2StreamSurfaceScalingInfo::output::PARAM_TYPE
+                };
+                for (const std::shared_ptr<C2Buffer> &buf : work->worklets.front()->output.buffers) {
+                    if (buf->data().graphicBlocks().size()) {
+                        for (C2Param::Index ix : stdGfxInfos) {
+                            if (!buf->hasInfo(ix)) {
+                                const C2Param *param =
+                                    config->getConfigParameterValue(ix.withStream(stream));
+                                if (param) {
+                                    std::shared_ptr<C2Param> info(C2Param::Copy(*param));
+                                    buf->setInfo(std::static_pointer_cast<C2Info>(info));
+                                }
+                            }
+                        }
+                    }
+                    ++stream;
+                }
+            }
+            mChannel->onWorkDone(
+                    std::move(work), changed ? config->mOutputFormat : nullptr,
+                    initData.hasChanged() ? initData.update().get() : nullptr);
             break;
         }
         default: {

@@ -33,7 +33,6 @@ namespace {
 using android::C2AllocatorGralloc;
 using android::C2AllocatorIon;
 using android::hardware::media::bufferpool::BufferPoolData;
-using android::hardware::media::bufferpool::V1_0::IAccessor;
 using android::hardware::media::bufferpool::V1_0::ResultStatus;
 using android::hardware::media::bufferpool::V1_0::implementation::BufferPoolAllocation;
 using android::hardware::media::bufferpool::V1_0::implementation::BufferPoolAllocator;
@@ -442,7 +441,8 @@ public:
     ~_C2BufferPoolAllocator() override {}
 
     ResultStatus allocate(const std::vector<uint8_t> &params,
-                          std::shared_ptr<BufferPoolAllocation> *alloc) override;
+                          std::shared_ptr<BufferPoolAllocation> *alloc,
+                          size_t *allocSize) override;
 
     bool compatible(const std::vector<uint8_t> &newParams,
                     const std::vector<uint8_t> &oldParams) override;
@@ -527,17 +527,27 @@ struct LinearAllocationDtor {
     const std::shared_ptr<C2LinearAllocation> mAllocation;
 };
 
+struct GraphicAllocationDtor {
+    GraphicAllocationDtor(const std::shared_ptr<C2GraphicAllocation> &alloc)
+        : mAllocation(alloc) {}
+
+    void operator()(BufferPoolAllocation *poolAlloc) { delete poolAlloc; }
+
+    const std::shared_ptr<C2GraphicAllocation> mAllocation;
+};
+
 ResultStatus _C2BufferPoolAllocator::allocate(
         const std::vector<uint8_t>  &params,
-        std::shared_ptr<BufferPoolAllocation> *alloc) {
+        std::shared_ptr<BufferPoolAllocation> *alloc,
+        size_t *allocSize) {
     AllocParams c2Params;
     memcpy(&c2Params, params.data(), std::min(sizeof(AllocParams), params.size()));
-    std::shared_ptr<C2LinearAllocation> c2Linear;
     c2_status_t status = C2_BAD_VALUE;
     switch(c2Params.data.allocType) {
         case ALLOC_NONE:
             break;
-        case ALLOC_LINEAR:
+        case ALLOC_LINEAR: {
+            std::shared_ptr<C2LinearAllocation> c2Linear;
             status = mAllocator->newLinearAllocation(
                     c2Params.data.params[0], c2Params.data.usage, &c2Linear);
             if (status == C2_OK && c2Linear) {
@@ -546,6 +556,7 @@ ResultStatus _C2BufferPoolAllocator::allocate(
                     *alloc = std::shared_ptr<BufferPoolAllocation>(
                             ptr, LinearAllocationDtor(c2Linear));
                     if (*alloc) {
+                        *allocSize = (size_t)c2Params.data.params[0];
                         return ResultStatus::OK;
                     }
                     delete ptr;
@@ -553,9 +564,29 @@ ResultStatus _C2BufferPoolAllocator::allocate(
                 return ResultStatus::NO_MEMORY;
             }
             break;
-        case ALLOC_GRAPHIC:
-            // TODO
+        }
+        case ALLOC_GRAPHIC: {
+            std::shared_ptr<C2GraphicAllocation> c2Graphic;
+            status = mAllocator->newGraphicAllocation(
+                    c2Params.data.params[0],
+                    c2Params.data.params[1],
+                    c2Params.data.params[2],
+                    c2Params.data.usage, &c2Graphic);
+            if (status == C2_OK && c2Graphic) {
+                BufferPoolAllocation *ptr = new BufferPoolAllocation(c2Graphic->handle());
+                if (ptr) {
+                    *alloc = std::shared_ptr<BufferPoolAllocation>(
+                            ptr, GraphicAllocationDtor(c2Graphic));
+                    if (*alloc) {
+                        *allocSize = c2Params.data.params[0] * c2Params.data.params[1];
+                        return ResultStatus::OK;
+                    }
+                    delete ptr;
+                }
+                return ResultStatus::NO_MEMORY;
+            }
             break;
+        }
         default:
             break;
     }
@@ -664,15 +695,46 @@ public:
         return C2_CORRUPTED;
     }
 
-    ConnectionId getConnectionId() {
-        return mInit != C2_OK ? INVALID_CONNECTIONID : mConnectionId;
+    c2_status_t fetchGraphicBlock(
+            uint32_t width, uint32_t height, uint32_t format,
+            C2MemoryUsage usage,
+            std::shared_ptr<C2GraphicBlock> *block) {
+        block->reset();
+        if (mInit != C2_OK) {
+            return mInit;
+        }
+        std::vector<uint8_t> params;
+        mAllocator->getGraphicParams(width, height, format, usage, &params);
+        std::shared_ptr<BufferPoolData> bufferPoolData;
+        native_handle_t *cHandle = nullptr;
+        ResultStatus status = mBufferPoolManager->allocate(
+                mConnectionId, params, &cHandle, &bufferPoolData);
+        if (status == ResultStatus::OK) {
+            native_handle_t *handle = native_handle_clone(cHandle);
+            if (handle) {
+                std::shared_ptr<C2GraphicAllocation> alloc;
+                std::shared_ptr<C2PooledBlockPoolData> poolData =
+                    std::make_shared<C2PooledBlockPoolData>(bufferPoolData);
+                c2_status_t err = mAllocator->priorGraphicAllocation(
+                        handle, &alloc);
+                if (err == C2_OK && poolData && alloc) {
+                    *block = _C2BlockFactory::CreateGraphicBlock(
+                            alloc, poolData, C2Rect(width, height));
+                    if (*block) {
+                        return C2_OK;
+                    }
+                }
+            }
+            return C2_NO_MEMORY;
+        }
+        if (status == ResultStatus::NO_MEMORY) {
+            return C2_NO_MEMORY;
+        }
+        return C2_CORRUPTED;
     }
 
-    bool getAccessor(android::sp<IAccessor> *accessor) {
-        if (mInit == C2_OK) {
-            return mBufferPoolManager->getAccessor(mConnectionId, accessor) == ResultStatus::OK;
-        }
-        return false;
+    ConnectionId getConnectionId() {
+        return mInit != C2_OK ? INVALID_CONNECTIONID : mConnectionId;
     }
 
 private:
@@ -699,18 +761,23 @@ c2_status_t C2PooledBlockPool::fetchLinearBlock(
     return C2_CORRUPTED;
 }
 
+c2_status_t C2PooledBlockPool::fetchGraphicBlock(
+        uint32_t width,
+        uint32_t height,
+        uint32_t format,
+        C2MemoryUsage usage,
+        std::shared_ptr<C2GraphicBlock> *block) {
+    if (mImpl) {
+        return mImpl->fetchGraphicBlock(width, height, format, usage, block);
+    }
+    return C2_CORRUPTED;
+}
+
 int64_t C2PooledBlockPool::getConnectionId() {
     if (mImpl) {
         return mImpl->getConnectionId();
     }
     return 0;
-}
-
-bool C2PooledBlockPool::getAccessor(android::sp<IAccessor> *accessor) {
-    if (mImpl) {
-        return mImpl->getAccessor(accessor);
-    }
-    return false;
 }
 
 /* ========================================== 2D BLOCK ========================================= */
@@ -1155,17 +1222,25 @@ public:
 
     c2_status_t setInfo(const std::shared_ptr<C2Info> &info) {
         // To "update" you need to erase the existing one if any, and then insert.
-        (void) mInfos.erase(info->type());
-        (void) mInfos.insert({ info->type(), info });
+        (void) mInfos.erase(info->coreIndex());
+        (void) mInfos.insert({ info->coreIndex(), info });
         return C2_OK;
     }
 
     bool hasInfo(C2Param::Type index) const {
-        return mInfos.count(index.type()) > 0;
+        return mInfos.count(index.coreIndex()) > 0;
+    }
+
+    std::shared_ptr<const C2Info> getInfo(C2Param::Type index) const {
+        auto it = mInfos.find(index.coreIndex());
+        if (it == mInfos.end()) {
+            return nullptr;
+        }
+        return std::const_pointer_cast<const C2Info>(it->second);
     }
 
     std::shared_ptr<C2Info> removeInfo(C2Param::Type index) {
-        auto it = mInfos.find(index.type());
+        auto it = mInfos.find(index.coreIndex());
         if (it == mInfos.end()) {
             return nullptr;
         }
@@ -1177,7 +1252,7 @@ public:
 private:
     C2Buffer * const mThis;
     BufferDataBuddy mData;
-    std::map<C2Param::Type, std::shared_ptr<C2Info>> mInfos;
+    std::map<C2Param::CoreIndex, std::shared_ptr<C2Info>> mInfos;
     std::list<std::pair<OnDestroyNotify, void *>> mNotify;
 };
 
@@ -1207,6 +1282,10 @@ c2_status_t C2Buffer::setInfo(const std::shared_ptr<C2Info> &info) {
 
 bool C2Buffer::hasInfo(C2Param::Type index) const {
     return mImpl->hasInfo(index);
+}
+
+std::shared_ptr<const C2Info> C2Buffer::getInfo(C2Param::Type index) const {
+    return mImpl->getInfo(index);
 }
 
 std::shared_ptr<C2Info> C2Buffer::removeInfo(C2Param::Type index) {

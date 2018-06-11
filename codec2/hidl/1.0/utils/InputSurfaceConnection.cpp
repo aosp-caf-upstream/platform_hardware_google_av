@@ -207,11 +207,7 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
         items.push_back(std::move(work));
 
         err = comp->queue_nb(&items);
-        if (err != C2_OK) {
-            return UNKNOWN_ERROR;
-        }
-
-        return OK;
+        return (err == C2_OK) ? OK : UNKNOWN_ERROR;
     }
 
     virtual status_t submitEos(int32_t /* bufferId */) override {
@@ -222,7 +218,17 @@ struct InputSurfaceConnection::Impl : public ComponentWrapper {
             return NO_INIT;
         }
 
-        c2_status_t err = comp->drain_nb(C2Component::DRAIN_COMPONENT_WITH_EOS);
+        std::unique_ptr<C2Work> work(new C2Work);
+        work->input.flags = (C2FrameData::flags_t)0;
+        work->input.ordinal.frameIndex = mFrameIndex.fetch_add(
+                1, std::memory_order_relaxed);
+        work->input.buffers.clear();
+        work->worklets.clear();
+        work->worklets.emplace_back(new C2Worklet);
+        std::list<std::unique_ptr<C2Work>> items;
+        items.push_back(std::move(work));
+
+        c2_status_t err = comp->queue_nb(&items);
         return (err == C2_OK) ? OK : UNKNOWN_ERROR;
     }
 

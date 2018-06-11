@@ -59,6 +59,15 @@ struct Connection : public IConnection {
     ResultStatus allocate(const std::vector<uint8_t> &params,
                           BufferId *bufferId, const native_handle_t **handle);
 
+    /**
+     * Processes pending buffer status messages and performs periodic cache cleaning
+     * from bufferpool.
+     *
+     * @param clearCache    if clearCache is true, bufferpool frees all buffers
+     *                      waiting to be recycled.
+     */
+    void cleanUp(bool clearCache);
+
     /** Destructs a connection. */
     ~Connection();
 

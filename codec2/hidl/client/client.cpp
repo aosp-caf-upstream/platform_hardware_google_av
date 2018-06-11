@@ -131,8 +131,7 @@ c2_status_t Codec2ConfigurableClient::query(
     }
     indices.resize(numIndices);
     if (heapParams) {
-        heapParams->reserve(numIndices);
-        heapParams->clear();
+        heapParams->reserve(heapParams->size() + numIndices);
     }
     c2_status_t status;
     Return<void> transStatus = base()->query(
@@ -223,13 +222,11 @@ c2_status_t Codec2ConfigurableClient::config(
                     const Params& o) {
                 status = static_cast<c2_status_t>(s);
                 if (status != C2_OK) {
-                    ALOGE("config -- call failed. "
+                    ALOGD("config -- call failed. "
                             "Error code = %d", static_cast<int>(status));
-                    return;
                 }
-                failures->clear();
-                failures->resize(f.size());
-                size_t i = 0;
+                size_t i = failures->size();
+                failures->resize(i + f.size());
                 for (const SettingResult& sf : f) {
                     status = objcpy(&(*failures)[i++], sf);
                     if (status != C2_OK) {
@@ -263,8 +260,8 @@ c2_status_t Codec2ConfigurableClient::querySupportedParams(
                             "Error code = %d", static_cast<int>(status));
                     return;
                 }
-                params->resize(p.size());
-                size_t i = 0;
+                size_t i = params->size();
+                params->resize(i + p.size());
                 for (const ParamDescriptor& sp : p) {
                     status = objcpy(&(*params)[i++], sp);
                     if (status != C2_OK) {
@@ -778,6 +775,7 @@ c2_status_t Codec2Client::Component::createBlockPool(
                     uint64_t pId,
                     const sp<IConfigurable>& c) {
                 status = static_cast<c2_status_t>(s);
+                configurable->reset();
                 if (status != C2_OK) {
                     ALOGE("createBlockPool -- call failed. "
                             "Error code = %d", static_cast<int>(status));
@@ -880,6 +878,26 @@ c2_status_t Codec2Client::Component::flush(
         ALOGE("flush -- transaction failed.");
         return C2_TRANSACTION_FAILED;
     }
+
+    // Indices of flushed work items.
+    std::vector<uint64_t> flushedIndices;
+    for (const std::unique_ptr<C2Work> &work : *flushedWork) {
+        if (work) {
+            flushedIndices.emplace_back(work->input.ordinal.frameIndex.peeku());
+        }
+    }
+    for (uint64_t flushedIndex : flushedIndices) {
+        std::lock_guard<std::mutex> lock(mInputBuffersMutex);
+        auto it = mInputBuffers.find(flushedIndex);
+        if (it == mInputBuffers.end()) {
+            ALOGI("unknown input index %llu in flush", (long long)flushedIndex);
+        } else {
+            ALOGV("flushed input index %llu with %zu buffers",
+                    (long long)flushedIndex, it->second.size());
+            mInputBuffers.erase(it);
+        }
+    }
+
     return status;
 }
 
@@ -926,6 +944,9 @@ c2_status_t Codec2Client::Component::stop() {
         ALOGE("stop -- call failed. "
                 "Error code = %d", static_cast<int>(status));
     }
+    mInputBuffersMutex.lock();
+    mInputBuffers.clear();
+    mInputBuffersMutex.unlock();
     return status;
 }
 
@@ -941,6 +962,9 @@ c2_status_t Codec2Client::Component::reset() {
         ALOGE("reset -- call failed. "
                 "Error code = %d", static_cast<int>(status));
     }
+    mInputBuffersMutex.lock();
+    mInputBuffers.clear();
+    mInputBuffersMutex.unlock();
     return status;
 }
 
@@ -956,6 +980,9 @@ c2_status_t Codec2Client::Component::release() {
         ALOGE("release -- call failed. "
                 "Error code = %d", static_cast<int>(status));
     }
+    mInputBuffersMutex.lock();
+    mInputBuffers.clear();
+    mInputBuffersMutex.unlock();
     return status;
 }
 

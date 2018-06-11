@@ -1,10 +1,6 @@
 cc_test {
     name: "ccodec_test",
 
-    tags: [
-        "tests",
-    ],
-
     srcs: [
         "ReflectedParamUpdater_test.cpp",
     ],

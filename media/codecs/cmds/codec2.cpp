@@ -26,7 +26,7 @@
 
 //#define LOG_NDEBUG 0
 #define LOG_TAG "codec2"
-#include <media/stagefright/foundation/ADebug.h>
+#include <log/log.h>
 
 #include <binder/IServiceManager.h>
 #include <binder/ProcessState.h>
@@ -56,6 +56,7 @@
 #include <C2BufferPriv.h>
 #include <C2Component.h>
 #include <C2Config.h>
+#include <C2Debug.h>
 #include <C2PlatformSupport.h>
 #include <C2Work.h>
 
