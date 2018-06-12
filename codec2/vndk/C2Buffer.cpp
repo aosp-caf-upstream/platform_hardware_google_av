@@ -129,8 +129,8 @@ public:
           mAllocation(other.mAllocation),
           mPoolData(other.mPoolData) { }
 
-    /** returns const pool data  */
-    std::shared_ptr<const _C2BlockPoolData> poolData() const {
+    /** returns pool data  */
+    std::shared_ptr<_C2BlockPoolData> poolData() const {
         return mPoolData;
     }
 
@@ -382,7 +382,7 @@ std::shared_ptr<C2LinearBlock> _C2BlockFactory::CreateLinearBlock(
     return std::shared_ptr<C2LinearBlock>(new C2LinearBlock(impl, *impl));
 }
 
-std::shared_ptr<const _C2BlockPoolData> _C2BlockFactory::GetLinearBlockPoolData(
+std::shared_ptr<_C2BlockPoolData> _C2BlockFactory::GetLinearBlockPoolData(
         const C2Block1D &block) {
     if (block.mImpl) {
         return block.mImpl->poolData();
@@ -804,8 +804,8 @@ public:
 
     virtual ~_C2Block2DImpl() = default;
 
-    /** returns const pool data  */
-    std::shared_ptr<const _C2BlockPoolData> poolData() const {
+    /** returns pool data  */
+    std::shared_ptr<_C2BlockPoolData> poolData() const {
         return mPoolData;
     }
 
@@ -1101,7 +1101,7 @@ std::shared_ptr<C2GraphicBlock> _C2BlockFactory::CreateGraphicBlock(
     return std::shared_ptr<C2GraphicBlock>(new C2GraphicBlock(impl, *impl));
 }
 
-std::shared_ptr<const _C2BlockPoolData> _C2BlockFactory::GetGraphicBlockPoolData(
+std::shared_ptr<_C2BlockPoolData> _C2BlockFactory::GetGraphicBlockPoolData(
         const C2Block2D &block) {
     if (block.mImpl) {
         return block.mImpl->poolData();

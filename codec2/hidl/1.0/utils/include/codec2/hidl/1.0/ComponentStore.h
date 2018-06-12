@@ -27,11 +27,11 @@
 #include <C2Param.h>
 #include <C2.h>
 
-#include <vector>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <map>
+#include <set>
+#include <vector>
 
 namespace hardware {
 namespace google {
@@ -88,13 +88,16 @@ struct ComponentStore : public Configurable<IComponentStore> {
             const hidl_vec<hidl_string>& args) override;
 
 protected:
+    // does bookkeeping for an interface that has been loaded
+    void onInterfaceLoaded(const std::shared_ptr<C2ComponentInterface> &intf);
 
     c2_status_t mInit;
     std::shared_ptr<C2ComponentStore> mStore;
     std::shared_ptr<C2ParamReflector> mParamReflector;
 
-    std::map<C2Param::CoreIndex, std::shared_ptr<C2StructDescriptor>>
-            mStructDescriptors;
+    std::map<C2Param::CoreIndex, std::shared_ptr<C2StructDescriptor>> mStructDescriptors;
+    std::set<C2Param::CoreIndex> mUnsupportedStructDescriptors;
+    std::set<C2String> mLoadedInterfaces;
     mutable std::mutex mStructDescriptorsMutex;
 
     // Component lifetime management

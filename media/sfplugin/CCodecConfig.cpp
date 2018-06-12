@@ -367,7 +367,10 @@ void CCodecConfig::initializeStandardParams() {
 
     add(ConfigMapper("csd-0",           C2_PARAMKEY_INIT_DATA,       "value")
         .limitTo(D::OUTPUT & D::READ));
-    add(ConfigMapper(KEY_COLOR_FORMAT,  C2_PARAMKEY_PIXEL_FORMAT, "value")
+
+    // Pixel Format (use local key for actual pixel format as we don't distinguish between
+    // SDK layouts for flexible format and we need the actual SDK color format in the media format)
+    add(ConfigMapper("android._color-format",  C2_PARAMKEY_PIXEL_FORMAT, "value")
         .limitTo((D::VIDEO | D::IMAGE) & D::RAW)
         .withMappers([](C2Value v) -> C2Value {
             int32_t value;
@@ -676,7 +679,7 @@ bool CCodecConfig::updateFormats(Domain domain) {
     bool changed = false;
     if (domain & mInputDomain) {
         sp<AMessage> oldFormat = mInputFormat;
-        mInputFormat = getSdkFormatForDomain(reflected, mInputDomain);
+        mInputFormat->extend(getSdkFormatForDomain(reflected, mInputDomain));
         if (mInputFormat->countEntries() != oldFormat->countEntries()
                 || mInputFormat->changesFrom(oldFormat)->countEntries() > 0) {
             changed = true;
@@ -684,7 +687,7 @@ bool CCodecConfig::updateFormats(Domain domain) {
     }
     if (domain & mOutputDomain) {
         sp<AMessage> oldFormat = mOutputFormat;
-        mOutputFormat = getSdkFormatForDomain(reflected, mOutputDomain);
+        mOutputFormat->extend(getSdkFormatForDomain(reflected, mOutputDomain));
         if (!changed &&
                 (mOutputFormat->countEntries() != oldFormat->countEntries()
                         || mOutputFormat->changesFrom(oldFormat)->countEntries() > 0)) {
@@ -904,7 +907,9 @@ status_t CCodecConfig::getConfigUpdateFromSdkParams(
         } else if (mLocalParams.count(ix)) {
             // query local parameter here
             auto it = mCurrentConfig.find(ix);
-            configUpdate->emplace_back(C2Param::Copy(*it->second));
+            if (it != mCurrentConfig.end()) {
+                configUpdate->emplace_back(C2Param::Copy(*it->second));
+            }
         }
     }
 

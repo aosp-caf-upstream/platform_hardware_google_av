@@ -80,6 +80,11 @@ class C2SoftAmrNbEnc::IntfImpl : public C2InterfaceHelper {
                 .withFields({C2F(mBitrate, value).inRange(4750, 12200)})
                 .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
                 .build());
+
+        addParameter(
+                DefineParam(mInputMaxBufSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 8192))
+                .build());
     }
 
     uint32_t getSampleRate() const { return mSampleRate->value; }
@@ -94,6 +99,7 @@ class C2SoftAmrNbEnc::IntfImpl : public C2InterfaceHelper {
     std::shared_ptr<C2StreamSampleRateInfo::input> mSampleRate;
     std::shared_ptr<C2StreamChannelCountInfo::input> mChannelCount;
     std::shared_ptr<C2BitrateTuning::output> mBitrate;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mInputMaxBufSize;
 };
 
 C2SoftAmrNbEnc::C2SoftAmrNbEnc(const char* name, c2_node_id_t id,
@@ -114,7 +120,26 @@ c2_status_t C2SoftAmrNbEnc::onInit() {
 
     if (AMREncodeInit(&mEncState, &mSidState, dtx_enable) != 0)
         return C2_CORRUPTED;
-    mMode = MR795;
+    // TODO: get mode directly from config
+    switch(mIntf->getBitrate()) {
+        case 4750: mMode = MR475;
+            break;
+        case 5150: mMode = MR515;
+            break;
+        case 5900: mMode = MR59;
+            break;
+        case 6700: mMode = MR67;
+            break;
+        case 7400: mMode = MR74;
+            break;
+        case 7950: mMode = MR795;
+            break;
+        case 10200: mMode = MR102;
+            break;
+        case 12200: mMode = MR122;
+            break;
+        default: mMode = MR795;
+    }
     mIsFirst = true;
     mSignalledError = false;
     mSignalledOutputEos = false;
@@ -170,15 +195,18 @@ void C2SoftAmrNbEnc::process(
         return;
     }
 
-    const C2ConstLinearBlock inBuffer = work->input.buffers[0]->data().linearBlocks().front();
     bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
-    size_t inOffset = inBuffer.offset();
-    size_t inSize = inBuffer.size();
-    C2ReadView rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
-    if (inSize && rView.error()) {
-        ALOGE("read view map failed %d", rView.error());
-        work->result = C2_CORRUPTED;
-        return;
+    size_t inOffset = 0u;
+    size_t inSize = 0u;
+    C2ReadView rView = mDummyReadView;
+    if (!work->input.buffers.empty()) {
+        rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        inSize = rView.capacity();
+        if (inSize && rView.error()) {
+            ALOGE("read view map failed %d", rView.error());
+            work->result = C2_CORRUPTED;
+            return;
+        }
     }
 
     ALOGV("in buffer attr. size %zu timestamp %d frameindex %d, flags %x",
@@ -203,10 +231,10 @@ void C2SoftAmrNbEnc::process(
     }
     uint64_t outTimeStamp =
         mProcessedSamples * 1000000ll / mIntf->getSampleRate();
-    const uint8_t *inPtr = rView.data() + inOffset;
     size_t inPos = 0;
     size_t outPos = 0;
     while (inPos < inSize) {
+        const uint8_t *inPtr = rView.data() + inOffset;
         int validSamples = mFilledLen / sizeof(int16_t);
         if ((inPos + (kNumBytesPerInputFrame - mFilledLen)) <= inSize) {
             memcpy(mInputFrame + validSamples, inPtr + inPos,

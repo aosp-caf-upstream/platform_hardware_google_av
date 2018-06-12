@@ -49,7 +49,9 @@ cc_library {
         "hardware.google.media.c2@1.0",
         "libhidlbase",
         "libstagefright_bufferpool@1.0",
+        "libstagefright_bufferqueue_helper",
         "libstagefright_codec2",
+        "libui",
     ],
 }
 

@@ -17,6 +17,8 @@
 #ifndef ANDROID_STAGEFRIGHT_C2BLOCK_INTERNAL_H_
 #define ANDROID_STAGEFRIGHT_C2BLOCK_INTERNAL_H_
 
+#include <android/hardware/graphics/bufferqueue/1.0/IGraphicBufferProducer.h>
+
 #include <C2Buffer.h>
 
 namespace android {
@@ -48,6 +50,8 @@ protected:
     virtual ~_C2BlockPoolData() = default;
 };
 
+struct C2BufferQueueBlockPoolData;
+
 /**
  * Internal only interface for creating blocks by block pool/buffer passing implementations.
  *
@@ -57,12 +61,12 @@ struct _C2BlockFactory {
     /**
      * Create a linear block from an allocation for an allotted range.
      *
-     * @param alloc parent allocation
-     * @param data  blockpool data
-     * @param offset allotted range offset
-     * @param size  allotted size
+     * \param alloc parent allocation
+     * \param data  blockpool data
+     * \param offset allotted range offset
+     * \param size  allotted size
      *
-     * @return shared pointer to the linear block. nullptr if there was not enough memory to
+     * \return shared pointer to the linear block. nullptr if there was not enough memory to
      *         create this block.
      */
     static
@@ -75,11 +79,11 @@ struct _C2BlockFactory {
     /**
      * Create a graphic block from an allocation for an allotted section.
      *
-     * @param alloc parent allocation
-     * @param data  blockpool data
-     * @param crop  allotted crop region
+     * \param alloc parent allocation
+     * \param data  blockpool data
+     * \param crop  allotted crop region
      *
-     * @return shared pointer to the graphic block. nullptr if there was not enough memory to
+     * \return shared pointer to the graphic block. nullptr if there was not enough memory to
      *         create this block.
      */
     static
@@ -91,27 +95,27 @@ struct _C2BlockFactory {
     /**
      * Return a block pool data from 1D block.
      *
-     * @param shared pointer to the 1D block which is already created.
+     * \param shared pointer to the 1D block which is already created.
      */
     static
-    std::shared_ptr<const _C2BlockPoolData> GetLinearBlockPoolData(
+    std::shared_ptr<_C2BlockPoolData> GetLinearBlockPoolData(
             const C2Block1D& block);
 
     /**
      * Return a block pool data from 2D block.
      *
-     * @param shared pointer to the 2D block which is already created.
+     * \param shared pointer to the 2D block which is already created.
      */
     static
-    std::shared_ptr<const _C2BlockPoolData> GetGraphicBlockPoolData(
+    std::shared_ptr<_C2BlockPoolData> GetGraphicBlockPoolData(
             const C2Block2D& block);
 
     /**
      * Create a linear block from the received native handle.
      *
-     * @param handle    native handle to a linear block
+     * \param handle    native handle to a linear block
      *
-     * @return shared pointer to the linear block. nullptr if there was not enough memory to
+     * \return shared pointer to the linear block. nullptr if there was not enough memory to
      *         create this block.
      */
     static
@@ -121,9 +125,9 @@ struct _C2BlockFactory {
     /**
      * Create a graphic block from the received native handle.
      *
-     * @param handle    native handle to a graphic block
+     * \param handle    native handle to a graphic block
      *
-     * @return shared pointer to the graphic block. nullptr if there was not enough memory to
+     * \return shared pointer to the graphic block. nullptr if there was not enough memory to
      *         create this block.
      */
     static
@@ -133,9 +137,9 @@ struct _C2BlockFactory {
     /**
      * Create a linear block from the received bufferpool data.
      *
-     * @param data  bufferpool data to a linear block
+     * \param data  bufferpool data to a linear block
      *
-     * @return shared pointer to the linear block. nullptr if there was not enough memory to
+     * \return shared pointer to the linear block. nullptr if there was not enough memory to
      *         create this block.
      */
     static
@@ -146,9 +150,9 @@ struct _C2BlockFactory {
     /**
      * Create a graphic block from the received bufferpool data.
      *
-     * @param data  bufferpool data to a graphic block
+     * \param data  bufferpool data to a graphic block
      *
-     * @return shared pointer to the graphic block. nullptr if there was not enough memory to
+     * \return shared pointer to the graphic block. nullptr if there was not enough memory to
      *         create this block.
      */
     static
@@ -159,31 +163,165 @@ struct _C2BlockFactory {
     /**
      * Get bufferpool data from the blockpool data.
      *
-     * @param poolData          blockpool data
-     * @param bufferPoolData    pointer to bufferpool data where the bufferpool
+     * \param poolData          blockpool data
+     * \param bufferPoolData    pointer to bufferpool data where the bufferpool
      *                          data is stored.
      *
-     * @return {@code true} when there is valid bufferpool data, {@code false} otherwise.
+     * \return {\code true} when there is valid bufferpool data, {\code false} otherwise.
      */
     static
     bool GetBufferPoolData(
             const std::shared_ptr<const _C2BlockPoolData> &poolData,
             std::shared_ptr<android::hardware::media::bufferpool::BufferPoolData> *bufferPoolData);
 
+    /*
+     * Life Cycle Management of BufferQueue-Based Blocks
+     * =================================================
+     *
+     * A block that is created by a bufferqueue-based blockpool requires some
+     * special treatment when it is destroyed. In particular, if the block
+     * corresponds to a held (dequeued/attached) GraphicBuffer in a slot of a
+     * bufferqueue, its destruction should trigger a call to
+     * IGraphicBufferProducer::cancelBuffer(). On the other hand, if the
+     * GraphicBuffer is not held, i.e., if it has been queued or detached,
+     * cancelBuffer() should not be called upon the destruction of the block.
+     *
+     * _C2BlockPoolData created by a bufferqueue-based blockpool includes two
+     * main pieces of information:
+     *   - "held" status: Whether cancelBuffer() should be called upon
+     *     destruction of the block.
+     *   - bufferqueue assignment: The triple (igbp, bqId, bqSlot), where igbp
+     *     is the IGraphicBufferProducer instance of the bufferqueue, bqId is
+     *     the globally unique id of the bufferqueue, and bqSlot is the slot in
+     *     the bufferqueue.
+     *
+     * igbp is the instance of IGraphicBufferProducer on which cancelBuffer()
+     * will be called if "held" status is true when the block is destroyed.
+     * (bqSlot is an input to cancelBuffer().) However, only bqId and bqSlot
+     * are retained when a block is transferred from one process to another. It
+     * is the responsibility of both the sending and receiving processes to
+     * maintain consistency of "held" status and igbp. Below are functions
+     * provided for this purpose:
+     *
+     *   - GetBufferQueueData(): Returns bqId and bqSlot.
+     *   - HoldBlockFromBufferQueue(): Sets "held" status to true.
+     *   - YieldBlockToBufferQueue(): Sets "held" status to false.
+     *   - AssignBlockToBufferQueue(): Sets the bufferqueue assignment and
+     *     "held" status.
+     *
+     * All these functions operate on _C2BlockPoolData, which can be obtained by
+     * calling GetGraphicBlockPoolData().
+     *
+     * HoldBlockFromBufferQueue() will mark the block as held, while
+     * YieldBlockToBufferQueue() will do the opposite. These two functions do
+     * not modify the bufferqueue assignment, so it is not wrong to call
+     * HoldBlockFromBufferQueue() after YieldBlockToBufferQueue() if it can be
+     * guaranteed that the block is not destroyed during the period between the
+     * two calls.
+     *
+     * AssingBlockToBufferQueue() has a "held" status as an optional argument.
+     * The default value is true.
+     *
+     * Maintaining Consistency with IGraphicBufferProducer Operations
+     * ==============================================================
+     *
+     * dequeueBuffer()
+     *   - This function is called by the blockpool. It should not be called
+     *     manually. The blockpool will automatically generate the correct
+     *     information for _C2BlockPoolData, with "held" status set to true.
+     *
+     * queueBuffer()
+     *   - After queueBuffer() is called, YieldBlockToBufferQueue() should be
+     *     called.
+     *
+     * attachBuffer()
+     *   - After attachBuffer() is called, AssignBlockToBufferQueue() should be
+     *     called with "held" status set to true.
+     *
+     * detachBuffer()
+     *   - After detachBuffer() is called, HoldBlockFromBufferQueue() should be
+     *     called.
+     */
+
     /**
      * Get bufferqueue data from the blockpool data.
      *
-     * @param poolData  blockpool data
-     * @param igbp_id   pointer to id of igbp to be stored
-     * @param igbp_slot pointer to slot of igbp to be stored
+     * Calling this function with \p bpId set to nullptr will return whether the
+     * block comes from a bufferqueue-based blockpool.
      *
-     * @return {@code true} when there is valid bufferqueue data, {@code false} otherwise.
+     * \param[in]  poolData blockpool data
+     * \param[out] bqId     Id of the bufferqueue owning the buffer (block)
+     * \param[out] bqSlot   Slot number of the buffer
+     *
+     * \return {\code true} when there is valid bufferqueue data;
+     *         {\code false} otherwise.
      */
     static
     bool GetBufferQueueData(
-            const std::shared_ptr<const _C2BlockPoolData> &poolData,
-            uint64_t *igbp_id,
-            int32_t *igbp_slot);
+            const std::shared_ptr<_C2BlockPoolData>& poolData,
+            uint64_t* bqId = nullptr, int32_t* bqSlot = nullptr);
+
+    /**
+     * Set bufferqueue assignment and "held" status to a block created by a
+     * bufferqueue-based blockpool.
+     *
+     * \param poolData blockpool data associated to the block.
+     * \param igbp     \c IGraphicBufferProducer instance from the designated
+     *                 bufferqueue.
+     * \param bqId     Id of the bufferqueue that will own the buffer (block).
+     * \param bqSlot   Slot number of the buffer.
+     * \param held     Whether the block is held. This "held" status can be
+     *                 changed later by calling YieldBlockToBufferQueue() or
+     *                 HoldBlockFromBufferQueue().
+     *
+     * \return \c true if \p poolData is valid bufferqueue data;
+     *         \c false otherwise.
+     *
+     * Note: bqId should match the unique id obtained from igbp->getUniqueId().
+     */
+    static
+    bool AssignBlockToBufferQueue(
+            const std::shared_ptr<_C2BlockPoolData>& poolData,
+            const ::android::sp<::android::hardware::graphics::bufferqueue::
+                                V1_0::IGraphicBufferProducer>& igbp,
+            uint64_t bqId,
+            int32_t bqSlot,
+            bool held = true);
+
+    /**
+     * Hold a block from the designated bufferqueue. This causes the destruction
+     * of the block to trigger a call to cancelBuffer().
+     *
+     * This function assumes that \p poolData comes from a bufferqueue-based
+     * block. It does not check if that is the case.
+     *
+     * \param poolData blockpool data associated to the block.
+     * \param igbp     \c IGraphicBufferProducer instance to be assigned to the
+     *                 block. This is not needed when the block is local.
+     *
+     * \return The previous held status.
+     */
+    static
+    bool HoldBlockFromBufferQueue(
+            const std::shared_ptr<_C2BlockPoolData>& poolData,
+            const ::android::sp<::android::hardware::graphics::bufferqueue::
+                                V1_0::IGraphicBufferProducer>& igbp = nullptr);
+
+    /**
+     * Yield a block to the designated bufferqueue. This causes the destruction
+     * of the block not to trigger a call to cancelBuffer();
+     *
+     * This function assumes that \p poolData comes from a bufferqueue-based
+     * block. It does not check if that is the case.
+     *
+     * \param poolData blockpool data associated to the block.
+     *
+     * \return The previous held status.
+     */
+    static
+    bool YieldBlockToBufferQueue(
+            const std::shared_ptr<_C2BlockPoolData>& poolData);
+
 };
 
 #endif // ANDROID_STAGEFRIGHT_C2BLOCK_INTERNAL_H_

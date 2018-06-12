@@ -78,7 +78,7 @@ private:
      *
      * \param structs List of structure descriptors to add support for
      */
-    C2_HIDE void addStructDescriptors(
+    void addStructDescriptors(
             std::vector<C2StructDescriptor> &structs, _Tuple<> *);
 
     /**
@@ -623,7 +623,7 @@ public:
         inline ParamBuilder &calculatedAs(
                 C2R (*fn)(bool, C2P<T> &, const C2P<Deps> &...), std::shared_ptr<Deps>& ... deps) {
             attrib() |= attrib_t::IS_READ_ONLY;
-            return withSetter(fn, std::forward(deps...));
+            return withSetter(fn, std::forward<decltype(deps)>(deps)...);
         }
 
         inline std::shared_ptr<ParamHelper> build() {

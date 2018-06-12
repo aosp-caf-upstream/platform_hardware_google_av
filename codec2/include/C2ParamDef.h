@@ -696,7 +696,8 @@ struct C2MemoryBlock {
     virtual const T *data() const = 0; // TODO: should this be friend access only in some C2Memory module?
     /// \returns a pointer to the start of this block. Care must be taken to not read or write
     /// outside the block.
-    inline T *data() { return const_cast<T*>(data()); }
+    inline T *data() { return const_cast<T*>(const_cast<const C2MemoryBlock*>(this)->data()); }
+
 protected:
     // TODO: for now it should never be deleted as C2MemoryBlock
     virtual ~C2MemoryBlock() = default;

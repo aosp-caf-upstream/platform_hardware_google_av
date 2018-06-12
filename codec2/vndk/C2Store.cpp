@@ -24,6 +24,7 @@
 #include <C2BqBufferPriv.h>
 #include <C2Component.h>
 #include <C2Config.h>
+#include <C2PlatformStorePluginLoader.h>
 #include <C2PlatformSupport.h>
 #include <util/C2InterfaceHelper.h>
 
@@ -336,6 +337,15 @@ public:
                 }
                 break;
             default:
+                // Try to create block pool from platform store plugins.
+                std::shared_ptr<C2BlockPool> ptr;
+                res = C2PlatformStorePluginLoader::GetInstance()->createBlockPool(
+                        allocatorId, poolId, &ptr);
+                if (res == C2_OK) {
+                    *pool = ptr;
+                    mBlockPools[poolId] = ptr;
+                    mComponents[poolId] = component;
+                }
                 break;
         }
         return res;

@@ -208,8 +208,8 @@ private:
     IVE_AIR_MODE_T mAIRMode;
     UWORD32 mAIRRefreshPeriod;
     std::map<const void *, std::shared_ptr<C2Buffer>> mBuffers;
-    std::list<std::unique_ptr<uint8_t[]>> mFreeConversionBuffers;
-    std::list<std::unique_ptr<uint8_t[]>> mConversionBuffersInUse;
+    MemoryBlockPool mConversionBuffers;
+    std::map<const void *, MemoryBlock> mConversionBuffersInUse;
 
     void initEncParams();
     c2_status_t initEncoder();

@@ -10,17 +10,18 @@ cc_library_shared {
         "SimpleC2Interface.cpp",
     ],
 
-    local_include_dirs: [
+    export_include_dirs: [
         "include",
     ],
 
-    export_include_dirs: [
-        "include",
+    export_shared_lib_headers: [
+        "libstagefright_ccodec_utils",
     ],
 
     shared_libs: [
         "libcutils", // for properties
         "liblog",    // for ALOG
+        "libstagefright_ccodec_utils", // for ImageCopy
         "libstagefright_foundation", // for Mutexed
     ],
 
@@ -45,10 +46,15 @@ cc_defaults {
     defaults: ["libstagefright_codec2-impl-defaults"],
     vendor_available: true,
 
+    export_shared_lib_headers: [
+        "libstagefright_ccodec_utils",
+    ],
+
     shared_libs: [
         "libcutils", // for properties
         "liblog", // for ALOG
         "libstagefright_foundation", // for ColorUtils and MIME
+        "libstagefright_ccodec_utils", // for ImageCopy
         "libstagefright_soft_c2common",
     ],
 

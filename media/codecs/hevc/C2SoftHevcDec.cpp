@@ -98,6 +98,7 @@ public:
         defaultColorInfo = C2StreamColorInfo::output::AllocShared(
             {C2ChromaOffsetStruct::ITU_YUV_420_0()}, 0u, 8u /* bitDepth */,
             C2Color::YUV_420);
+        helper->addStructDescriptors<C2ChromaOffsetStruct>();
 
         addParameter(
                 DefineParam(mColorInfo, C2_PARAMKEY_CODED_COLOR_INFO)
@@ -740,15 +741,18 @@ void C2SoftHevcDec::process(
         return;
     }
 
-    const C2ConstLinearBlock inBuffer = work->input.buffers[0]->data().linearBlocks().front();
-    size_t inOffset = inBuffer.offset();
-    size_t inSize = inBuffer.size();
+    size_t inOffset = 0u;
+    size_t inSize = 0u;
     uint32_t workIndex = work->input.ordinal.frameIndex.peeku() & 0xFFFFFFFF;
-    C2ReadView rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
-    if (inSize && rView.error()) {
-        ALOGE("read view map failed %d", rView.error());
-        work->result = rView.error();
-        return;
+    C2ReadView rView = mDummyReadView;
+    if (!work->input.buffers.empty()) {
+        rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        inSize = rView.capacity();
+        if (inSize && rView.error()) {
+            ALOGE("read view map failed %d", rView.error());
+            work->result = rView.error();
+            return;
+        }
     }
     bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
     bool hasPicture = false;

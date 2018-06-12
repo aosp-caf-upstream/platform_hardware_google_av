@@ -103,7 +103,7 @@ public:
                 .build());
 
         addParameter(
-                DefineParam(mAacFormat, C2_NAME_STREAM_BITRATE_SETTING)
+                DefineParam(mAacFormat, C2_NAME_STREAM_AAC_FORMAT_SETTING)
                 .withDefault(new C2StreamAacFormatInfo::input(0u, C2AacStreamFormatRaw))
                 .withFields({C2F(mAacFormat, value).oneOf({
                     C2AacStreamFormatRaw, C2AacStreamFormatAdts
@@ -446,9 +446,13 @@ void C2SoftAacDec::process(
     UINT bytesValid[FILEREAD_MAX_LAYERS] = {0};
 
     INT_PCM tmpOutBuffer[2048 * MAX_CHANNEL_COUNT];
-    C2ReadView view = work->input.buffers[0]->data().linearBlocks().front().map().get();
+    C2ReadView view = mDummyReadView;
     size_t offset = 0u;
-    size_t size = view.capacity();
+    size_t size = 0u;
+    if (!work->input.buffers.empty()) {
+        view = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        size = view.capacity();
+    }
 
     bool eos = (work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0;
     bool codecConfig = (work->input.flags & C2FrameData::FLAG_CODEC_CONFIG) != 0;
@@ -460,7 +464,7 @@ void C2SoftAacDec::process(
         codecConfig = true;
     }
 #endif
-    if (codecConfig) {
+    if (codecConfig && size > 0u) {
         // const_cast because of libAACdec method signature.
         inBuffer[0] = const_cast<UCHAR *>(view.data() + offset);
         inBufferLength[0] = size;
@@ -729,7 +733,7 @@ c2_status_t C2SoftAacDec::drainInternal(
             finish(mBuffersInfo.front().frameIndex, fillEmptyWork);
             mBuffersInfo.pop_front();
         }
-        if (work->workletsProcessed == 0u) {
+        if (work && work->workletsProcessed == 0u) {
             fillEmptyWork(work);
         }
         mBuffersInfo.clear();
