@@ -28,6 +28,28 @@
 
 namespace android {
 
+/**
+ * Copies a graphic view into a media image.
+ *
+ * \param imgBase base of MediaImage
+ * \param img MediaImage data
+ * \param view graphic view
+ *
+ * \return OK on success
+ */
+status_t ImageCopy(uint8_t *imgBase, const MediaImage2 *img, const C2GraphicView &view);
+
+/**
+ * Copies a media image into a graphic view.
+ *
+ * \param view graphic view
+ * \param imgBase base of MediaImage
+ * \param img MediaImage data
+ *
+ * \return OK on success
+ */
+status_t ImageCopy(C2GraphicView &view, const uint8_t *imgBase, const MediaImage2 *img);
+
 class Codec2Buffer : public MediaCodecBuffer {
 public:
     using MediaCodecBuffer::MediaCodecBuffer;
@@ -73,6 +95,11 @@ protected:
      * copy() implementation for linear buffers.
      */
     bool copyLinear(const std::shared_ptr<C2Buffer> &buffer);
+
+    /**
+     * sets MediaImage data for flexible graphic buffers
+     */
+    void setImageData(const sp<ABuffer> &imageData);
 };
 
 /**

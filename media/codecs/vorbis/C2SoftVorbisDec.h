@@ -55,10 +55,10 @@ struct C2SoftVorbisDec : public SimpleC2Component {
     vorbis_info *mVi;
 
     int32_t mNumFramesLeftOnPage;
-    size_t mInputBufferCount;
     bool mSignalledError;
     bool mSignalledOutputEos;
-
+    bool mInfoUnpacked;
+    bool mBooksUnpacked;
     status_t initDecoder();
 
     C2_DO_NOT_COPY(C2SoftVorbisDec);

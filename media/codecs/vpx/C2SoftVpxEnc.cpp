@@ -19,6 +19,9 @@
 #include <log/log.h>
 #include <utils/misc.h>
 
+#include <media/hardware/VideoAPI.h>
+
+#include <Codec2BufferUtils.h>
 #include <C2Debug.h>
 #include "C2SoftVpxEnc.h"
 
@@ -41,65 +44,6 @@ static size_t getCpuCoreCount() {
     return (size_t)cpuCoreCount;
 }
 
-void ConvertRGBToPlanarYUV(
-        uint8_t *dstY, size_t dstStride, size_t dstVStride,
-        const C2GraphicView &src) {
-    CHECK(dstY != nullptr);
-    CHECK((src.width() & 1) == 0);
-    CHECK((src.height() & 1) == 0);
-
-    uint8_t *dstU = dstY + dstStride * dstVStride;
-    uint8_t *dstV = dstU + (dstStride >> 1) * (dstVStride >> 1);
-
-    const C2PlanarLayout &layout = src.layout();
-    const uint8_t *pRed   = src.data()[C2PlanarLayout::PLANE_R];
-    const uint8_t *pGreen = src.data()[C2PlanarLayout::PLANE_G];
-    const uint8_t *pBlue  = src.data()[C2PlanarLayout::PLANE_B];
-
-#define CLIP3(x,y,z) (((z) < (x)) ? (x) : (((z) > (y)) ? (y) : (z)))
-    for (size_t y = 0; y < src.height(); ++y) {
-        for (size_t x = 0; x < src.width(); ++x) {
-            uint8_t red = *pRed;
-            uint8_t green = *pGreen;
-            uint8_t blue = *pBlue;
-
-            // using ITU-R BT.601 conversion matrix
-            unsigned luma =
-                CLIP3(0, (((red * 66 + green * 129 + blue * 25) >> 8) + 16), 255);
-
-            dstY[x] = luma;
-
-            if ((x & 1) == 0 && (y & 1) == 0) {
-                unsigned U =
-                    CLIP3(0, (((-red * 38 - green * 74 + blue * 112) >> 8) + 128), 255);
-
-                unsigned V =
-                    CLIP3(0, (((red * 112 - green * 94 - blue * 18) >> 8) + 128), 255);
-
-                dstU[x >> 1] = U;
-                dstV[x >> 1] = V;
-            }
-            pRed   += layout.planes[C2PlanarLayout::PLANE_R].colInc;
-            pGreen += layout.planes[C2PlanarLayout::PLANE_G].colInc;
-            pBlue  += layout.planes[C2PlanarLayout::PLANE_B].colInc;
-        }
-
-        if ((y & 1) == 0) {
-            dstU += dstStride >> 1;
-            dstV += dstStride >> 1;
-        }
-
-        pRed   -= layout.planes[C2PlanarLayout::PLANE_R].colInc * src.width();
-        pGreen -= layout.planes[C2PlanarLayout::PLANE_G].colInc * src.width();
-        pBlue  -= layout.planes[C2PlanarLayout::PLANE_B].colInc * src.width();
-        pRed   += layout.planes[C2PlanarLayout::PLANE_R].rowInc;
-        pGreen += layout.planes[C2PlanarLayout::PLANE_G].rowInc;
-        pBlue  += layout.planes[C2PlanarLayout::PLANE_B].rowInc;
-
-        dstY += dstStride;
-    }
-}
-
 C2SoftVpxEnc::C2SoftVpxEnc(const char* name, c2_node_id_t id,
                            const std::shared_ptr<IntfImpl>& intfImpl)
     : SimpleC2Component(
@@ -108,7 +52,7 @@ C2SoftVpxEnc::C2SoftVpxEnc(const char* name, c2_node_id_t id,
       mCodecContext(nullptr),
       mCodecConfiguration(nullptr),
       mCodecInterface(nullptr),
-      mStrideAlign(1),
+      mStrideAlign(2),
       mColorFormat(VPX_IMG_FMT_I420),
       mBitrateUpdated(false),
       mBitrateControlMode(VPX_VBR),
@@ -121,7 +65,6 @@ C2SoftVpxEnc::C2SoftVpxEnc(const char* name, c2_node_id_t id,
       mTemporalPatternLength(0),
       mTemporalPatternIdx(0),
       mLastTimestamp(0x7FFFFFFFFFFFFFFFull),
-      mConversionBuffer(nullptr),
       mKeyFrameRequested(false),
       mSignalledOutputEos(false),
       mSignalledError(false) {
@@ -148,11 +91,6 @@ void C2SoftVpxEnc::onRelease() {
     if (mCodecConfiguration) {
         delete mCodecConfiguration;
         mCodecConfiguration = nullptr;
-    }
-
-    if (mConversionBuffer) {
-        free(mConversionBuffer);
-        mConversionBuffer = nullptr;
     }
 
     // this one is not allocated by us
@@ -352,26 +290,24 @@ status_t C2SoftVpxEnc::initEncoder() {
     codec_return = setCodecSpecificControls();
     if (codec_return != VPX_CODEC_OK) goto CleanUp;
 
-    if (mConversionBuffer) {
-        free(mConversionBuffer);
-        mConversionBuffer = nullptr;
+    {
+        uint32_t width = mIntf->getWidth();
+        uint32_t height = mIntf->getHeight();
+        if (((uint64_t)width * height) >
+            ((uint64_t)INT32_MAX / 3)) {
+            ALOGE("b/25812794, Buffer size is too big, width=%u, height=%u.", width, height);
+        } else {
+            uint32_t stride = (width + mStrideAlign - 1) & ~(mStrideAlign - 1);
+            uint32_t vstride = (height + mStrideAlign - 1) & ~(mStrideAlign - 1);
+            mConversionBuffer = MemoryBlock::Allocate(stride * vstride * 3 / 2);
+            if (!mConversionBuffer.size()) {
+                ALOGE("Allocating conversion buffer failed.");
+            } else {
+                mNumInputFrames = -1;
+                return OK;
+            }
+        }
     }
-    if (((uint64_t)mIntf->getWidth() * mIntf->getHeight()) >
-        ((uint64_t)INT32_MAX / 3)) {
-        ALOGE("b/25812794, Buffer size is too big, width=%d, height=%d.",
-              mIntf->getWidth(), mIntf->getHeight());
-        goto CleanUp;
-    }
-    mConversionBuffer =
-        (uint8_t*)malloc(mIntf->getWidth() * mIntf->getHeight() * 3 / 2);
-    if (!mConversionBuffer) {
-        ALOGE("Allocating conversion buffer failed.");
-        goto CleanUp;
-    }
-
-    mNumInputFrames = -1;
-
-    return OK;
 
 CleanUp:
     onRelease();
@@ -457,7 +393,7 @@ void C2SoftVpxEnc::process(
         const std::unique_ptr<C2Work> &work,
         const std::shared_ptr<C2BlockPool> &pool) {
     work->result = C2_OK;
-    work->workletsProcessed = 0u;
+    work->workletsProcessed = 1u;
     if (mSignalledError || mSignalledOutputEos) {
         work->result = C2_BAD_VALUE;
         return;
@@ -477,8 +413,25 @@ void C2SoftVpxEnc::process(
         work->worklets.front()->output.configUpdate.push_back(std::move(csd));
     }
 
+    std::shared_ptr<const C2GraphicView> rView;
+    std::shared_ptr<C2Buffer> inputBuffer;
+    if (!work->input.buffers.empty()) {
+        inputBuffer = work->input.buffers[0];
+        rView = std::make_shared<const C2GraphicView>(
+                    inputBuffer->data().graphicBlocks().front().map().get());
+        if (rView->error() != C2_OK) {
+            ALOGE("graphic view map err = %d", rView->error());
+            work->result = C2_CORRUPTED;
+            return;
+        }
+    } else {
+        ALOGE("Empty input Buffer");
+        work->result = C2_BAD_VALUE;
+        return;
+    }
+
     const C2ConstGraphicBlock inBuffer =
-        work->input.buffers[0]->data().graphicBlocks().front();
+        inputBuffer->data().graphicBlocks().front();
     if (inBuffer.width() != mIntf->getWidth() ||
         inBuffer.height() != mIntf->getHeight()) {
         ALOGE("unexpected Input buffer attributes %d(%d) x %d(%d)",
@@ -487,19 +440,65 @@ void C2SoftVpxEnc::process(
         work->result = C2_BAD_VALUE;
         return;
     }
-    const C2GraphicView rView = work->input.buffers[0]->data().graphicBlocks().front().map().get();
-    if (rView.error() != C2_OK) {
-        ALOGE("graphic view map err = %d", rView.error());
-        work->result = C2_CORRUPTED;
+    bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
+    vpx_image_t raw_frame;
+    const C2PlanarLayout &layout = rView->layout();
+    uint32_t width = rView->width();
+    uint32_t height = rView->height();
+    if (width > 0x8000 || height > 0x8000) {
+        ALOGE("Image too big: %u x %u", width, height);
+        work->result = C2_BAD_VALUE;
         return;
     }
-    bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
-    const C2PlanarLayout &layout = rView.layout();
+    uint32_t stride = (width + mStrideAlign - 1) & ~(mStrideAlign - 1);
+    uint32_t vstride = (height + mStrideAlign - 1) & ~(mStrideAlign - 1);
     switch (layout.type) {
         case C2PlanarLayout::TYPE_RGB:
         case C2PlanarLayout::TYPE_RGBA: {
-            ConvertRGBToPlanarYUV(mConversionBuffer, mIntf->getWidth(),
-                                  mIntf->getHeight(), rView);
+            ConvertRGBToPlanarYUV(mConversionBuffer.data(), stride, vstride,
+                                  mConversionBuffer.size(), *rView.get());
+            vpx_img_wrap(&raw_frame, VPX_IMG_FMT_I420, width, height,
+                         mStrideAlign, mConversionBuffer.data());
+            break;
+        }
+        case C2PlanarLayout::TYPE_YUV: {
+            if (!IsYUV420(*rView)) {
+                ALOGE("input is not YUV420");
+                work->result = C2_BAD_VALUE;
+                return;
+            }
+
+            if (layout.planes[layout.PLANE_Y].colInc == 1
+                    && layout.planes[layout.PLANE_U].colInc == 1
+                    && layout.planes[layout.PLANE_V].colInc == 1) {
+                // I420 compatible - though with custom offset and stride
+                vpx_img_wrap(&raw_frame, VPX_IMG_FMT_I420, width, height,
+                             mStrideAlign, (uint8_t*)rView->data()[0]);
+                raw_frame.planes[1] = (uint8_t*)rView->data()[1];
+                raw_frame.planes[2] = (uint8_t*)rView->data()[2];
+                raw_frame.stride[0] = layout.planes[layout.PLANE_Y].rowInc;
+                raw_frame.stride[1] = layout.planes[layout.PLANE_U].rowInc;
+                raw_frame.stride[2] = layout.planes[layout.PLANE_V].rowInc;
+            } else {
+                // copy to I420
+                MediaImage2 img = CreateYUV420PlanarMediaImage2(width, height, stride, vstride);
+                if (mConversionBuffer.size() >= stride * vstride * 3 / 2) {
+                    status_t err = ImageCopy(mConversionBuffer.data(), &img, *rView);
+                    if (err != OK) {
+                        ALOGE("Buffer conversion failed: %d", err);
+                        work->result = C2_BAD_VALUE;
+                        return;
+                    }
+                    vpx_img_wrap(&raw_frame, VPX_IMG_FMT_I420, stride, vstride,
+                                 mStrideAlign, (uint8_t*)rView->data()[0]);
+                    vpx_img_set_rect(&raw_frame, 0, 0, width, height);
+                } else {
+                    ALOGE("Conversion buffer is too small: %u x %u for %zu",
+                            stride, vstride, mConversionBuffer.size());
+                    work->result = C2_BAD_VALUE;
+                    return;
+                }
+            }
             break;
         }
         default:
@@ -525,10 +524,6 @@ void C2SoftVpxEnc::process(
     }
     mLastTimestamp = inputTimeStamp;
 
-    uint8_t *source = mConversionBuffer;
-    vpx_image_t raw_frame;
-    vpx_img_wrap(&raw_frame, VPX_IMG_FMT_I420, mIntf->getWidth(),
-                 mIntf->getHeight(), mStrideAlign, source);
 
     if (mBitrateUpdated) {
         mCodecConfiguration->rc_target_bitrate =
@@ -554,6 +549,7 @@ void C2SoftVpxEnc::process(
         return;
     }
 
+    bool populated = false;
     vpx_codec_iter_t encoded_packet_iterator = nullptr;
     const vpx_codec_cx_pkt_t* encoded_packet;
     while ((encoded_packet = vpx_codec_get_cx_data(
@@ -588,11 +584,15 @@ void C2SoftVpxEnc::process(
             work->worklets.front()->output.ordinal = work->input.ordinal;
             work->worklets.front()->output.ordinal.timestamp = encoded_packet->data.frame.pts;
             work->workletsProcessed = 1u;
+            populated = true;
             if (eos) {
                 mSignalledOutputEos = true;
                 ALOGV("signalled EOS");
             }
         }
+    }
+    if (!populated) {
+        work->workletsProcessed = 0u;
     }
 }
 

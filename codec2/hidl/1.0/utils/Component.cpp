@@ -162,9 +162,9 @@ struct Component::Listener : public C2Component::Listener {
             Return<void> transStatus = listener->onWorkDone(workBundle);
             if (!transStatus.isOk()) {
                 ALOGE("onWorkDone -- transaction failed.");
+                return;
             }
-
-            // Finish buffer transfers: nothing else to do
+            yieldBufferQueueBlocks(c2workItems, true);
         }
     }
 
@@ -220,11 +220,11 @@ Return<void> Component::flush(flush_cb _hidl_cb) {
 
     Status res = static_cast<Status>(c2res);
     if (c2res == C2_OK) {
-        // TODO: Connect with bufferpool API for buffer transfers
         ALOGV("flush -- converting output");
         res = objcpy(&flushedWorkBundle, c2flushedWorks, &mBufferPoolSender);
     }
     _hidl_cb(res, flushedWorkBundle);
+    yieldBufferQueueBlocks(c2flushedWorks, true);
     return Void();
 }
 
@@ -243,7 +243,16 @@ Return<Status> Component::setOutputSurface(
     if (pool && pool->getAllocatorId() == C2PlatformAllocatorStore::BUFFERQUEUE) {
         std::shared_ptr<C2BufferQueueBlockPool> bqPool =
                 std::static_pointer_cast<C2BufferQueueBlockPool>(pool);
+        C2BufferQueueBlockPool::OnRenderCallback cb =
+            [this](uint64_t producer, int32_t slot, int64_t nsecs) {
+                // TODO: batch this
+                hidl_vec<IComponentListener::RenderedFrame> rendered;
+                rendered.resize(1);
+                rendered[0] = { producer, slot, nsecs };
+                mListener->onFramesRendered(rendered);
+        };
         if (bqPool) {
+            bqPool->setRenderCallback(cb);
             bqPool->configureProducer(surface);
         }
     }

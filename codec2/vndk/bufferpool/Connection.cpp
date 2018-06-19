@@ -66,7 +66,7 @@ ResultStatus Connection::allocate(
 }
 
 void Connection::cleanUp(bool clearCache) {
-    if (!mInitialized && mAccessor) {
+    if (mInitialized && mAccessor) {
         mAccessor->cleanUp(clearCache);
     }
 }

@@ -130,7 +130,6 @@ c2_status_t C2SoftVorbisDec::onStop() {
         mVi = nullptr;
     }
     mNumFramesLeftOnPage = -1;
-    mInputBufferCount = 0;
     mSignalledOutputEos = false;
     mSignalledError = false;
 
@@ -165,15 +164,14 @@ status_t C2SoftVorbisDec::initDecoder() {
     vorbis_dsp_clear(mState);
 
     mNumFramesLeftOnPage = -1;
-    mInputBufferCount = 0;
     mSignalledError = false;
     mSignalledOutputEos = false;
-
+    mInfoUnpacked = false;
+    mBooksUnpacked = false;
     return OK;
 }
 
 c2_status_t C2SoftVorbisDec::onFlush_sm() {
-    mInputBufferCount = 0;
     mNumFramesLeftOnPage = -1;
     mSignalledOutputEos = false;
     if (mState) vorbis_dsp_restart(mState);
@@ -235,15 +233,18 @@ void C2SoftVorbisDec::process(
         return;
     }
 
-    const C2ConstLinearBlock inBuffer = work->input.buffers[0]->data().linearBlocks().front();
     bool eos = ((work->input.flags & C2FrameData::FLAG_END_OF_STREAM) != 0);
-    size_t inOffset = inBuffer.offset();
-    size_t inSize = inBuffer.size();
-    C2ReadView rView = inBuffer.map().get();
-    if (inSize && rView.error()) {
-        ALOGE("read view map failed %d", rView.error());
-        work->result = rView.error();
-        return;
+    size_t inOffset = 0u;
+    size_t inSize = 0u;
+    C2ReadView rView = mDummyReadView;
+    if (!work->input.buffers.empty()) {
+        rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        inSize = rView.capacity();
+        if (inSize && rView.error()) {
+            ALOGE("read view map failed %d", rView.error());
+            work->result = rView.error();
+            return;
+        }
     }
 
     if (inSize == 0) {
@@ -260,9 +261,9 @@ void C2SoftVorbisDec::process(
     const uint8_t *data = rView.data() + inOffset;
     int32_t numChannels  = mVi->channels;
     int32_t samplingRate = mVi->rate;
-    if (mInputBufferCount < 2) {
-        if (inSize < 7 || memcmp(&data[1], "vorbis", 6)) {
-            ALOGE("unexpected first 7 bytes in CSD");
+    if (inSize > 7 && !memcmp(&data[1], "vorbis", 6)) {
+        if ((data[0] != 1) && (data[0] != 5)) {
+            ALOGE("unexpected type received %d", data[0]);
             mSignalledError = true;
             work->result = C2_CORRUPTED;
             return;
@@ -274,13 +275,7 @@ void C2SoftVorbisDec::process(
 
         // skip 7 <type + "vorbis"> bytes
         makeBitReader((const uint8_t *)data + 7, inSize - 7, &buf, &ref, &bits);
-        if (mInputBufferCount == 0) {
-            if (data[0] != 1) {
-                ALOGE("unexpected type received %d", data[0]);
-                mSignalledError = true;
-                work->result = C2_CORRUPTED;
-                return;
-            }
+        if (data[0] == 1) {
             vorbis_info_init(mVi);
             if (0 != _vorbis_unpack_info(mVi, &bits)) {
                 ALOGE("Encountered error while unpacking info");
@@ -311,9 +306,10 @@ void C2SoftVorbisDec::process(
                     return;
                 }
             }
+            mInfoUnpacked = true;
         } else {
-            if (data[0] != 5) {
-                ALOGE("unexpected type received %d", data[0]);
+            if (!mInfoUnpacked) {
+                ALOGE("Data with type:5 sent before sending type:1");
                 mSignalledError = true;
                 work->result = C2_CORRUPTED;
                 return;
@@ -330,8 +326,8 @@ void C2SoftVorbisDec::process(
                 work->result = C2_CORRUPTED;
                 return;
             }
+            mBooksUnpacked = true;
         }
-        ++mInputBufferCount;
         fillEmptyWork(work);
         if (eos) {
             mSignalledOutputEos = true;
@@ -339,6 +335,14 @@ void C2SoftVorbisDec::process(
         }
         return;
     }
+
+    if (!mInfoUnpacked || !mBooksUnpacked) {
+        ALOGE("Missing CODEC_CONFIG data mInfoUnpacked: %d mBooksUnpack %d", mInfoUnpacked, mBooksUnpacked);
+        mSignalledError = true;
+        work->result = C2_CORRUPTED;
+        return;
+    }
+
     int32_t numPageFrames = 0;
     if (inSize < sizeof(numPageFrames)) {
         ALOGE("input header has size %zu, expected %zu", inSize, sizeof(numPageFrames));

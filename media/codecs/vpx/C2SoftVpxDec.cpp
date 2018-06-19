@@ -114,6 +114,7 @@ public:
             C2StreamColorInfo::output::AllocShared(
                     { C2ChromaOffsetStruct::ITU_YUV_420_0() },
                     0u, 8u /* bitDepth */, C2Color::YUV_420);
+        helper->addStructDescriptors<C2ChromaOffsetStruct>();
 
         addParameter(
                 DefineParam(mColorInfo, C2_PARAMKEY_CODED_COLOR_INFO)
@@ -324,14 +325,17 @@ void C2SoftVpxDec::process(
         return;
     }
 
-    const C2ConstLinearBlock inBuffer = work->input.buffers[0]->data().linearBlocks().front();
-    size_t inOffset = inBuffer.offset();
-    size_t inSize = inBuffer.size();
-    C2ReadView rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
-    if (inSize && rView.error()) {
-        ALOGE("read view map failed %d", rView.error());
-        work->result = C2_CORRUPTED;
-        return;
+    size_t inOffset = 0u;
+    size_t inSize = 0u;
+    C2ReadView rView = mDummyReadView;
+    if (!work->input.buffers.empty()) {
+        rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        inSize = rView.capacity();
+        if (inSize && rView.error()) {
+            ALOGE("read view map failed %d", rView.error());
+            work->result = C2_CORRUPTED;
+            return;
+        }
     }
 
     bool codecConfig = ((work->input.flags & C2FrameData::FLAG_CODEC_CONFIG) !=0);
@@ -356,10 +360,10 @@ void C2SoftVpxDec::process(
         }
     }
 
-    uint8_t *bitstream = const_cast<uint8_t *>(rView.data() + inOffset);
     int64_t frameIndex = work->input.ordinal.frameIndex.peekll();
 
     if (inSize) {
+        uint8_t *bitstream = const_cast<uint8_t *>(rView.data() + inOffset);
         vpx_codec_err_t err = vpx_codec_decode(
                 mCodecCtx, bitstream, inSize, &frameIndex, 0);
         if (err != VPX_CODEC_OK) {

@@ -19,12 +19,15 @@
 #include <log/log.h>
 #include <utils/misc.h>
 
+#include <media/hardware/VideoAPI.h>
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MediaErrors.h>
 #include <media/stagefright/MetaData.h>
+#include <media/stagefright/foundation/AUtils.h>
 
 #include <C2Debug.h>
 #include <C2PlatformSupport.h>
+#include <Codec2BufferUtils.h>
 #include <SimpleC2Interface.h>
 #include <util/C2InterfaceHelper.h>
 
@@ -144,60 +147,6 @@ static size_t GetCPUCoreCount() {
     CHECK(cpuCoreCount >= 1);
     ALOGV("Number of CPU cores: %ld", cpuCoreCount);
     return (size_t)cpuCoreCount;
-}
-
-void ConvertRGBToPlanarYUV(
-        uint8_t *dstY, size_t dstStride, size_t dstVStride,
-        const C2GraphicView &src) {
-    uint8_t *dstU = dstY + dstStride * dstVStride;
-    uint8_t *dstV = dstU + (dstStride >> 1) * (dstVStride >> 1);
-
-    const C2PlanarLayout &layout = src.layout();
-    const uint8_t *pRed   = src.data()[C2PlanarLayout::PLANE_R];
-    const uint8_t *pGreen = src.data()[C2PlanarLayout::PLANE_G];
-    const uint8_t *pBlue  = src.data()[C2PlanarLayout::PLANE_B];
-
-    for (size_t y = 0; y < src.height(); ++y) {
-        for (size_t x = 0; x < src.width(); ++x) {
-            unsigned red   = *pRed;
-            unsigned green = *pGreen;
-            unsigned blue  = *pBlue;
-
-            // using ITU-R BT.601 conversion matrix
-            unsigned luma =
-                ((red * 66 + green * 129 + blue * 25) >> 8) + 16;
-
-            dstY[x] = luma;
-
-            if ((x & 1) == 0 && (y & 1) == 0) {
-                unsigned U =
-                    ((-red * 38 - green * 74 + blue * 112) >> 8) + 128;
-
-                unsigned V =
-                    ((red * 112 - green * 94 - blue * 18) >> 8) + 128;
-
-                dstU[x >> 1] = U;
-                dstV[x >> 1] = V;
-            }
-            pRed   += layout.planes[C2PlanarLayout::PLANE_R].colInc;
-            pGreen += layout.planes[C2PlanarLayout::PLANE_G].colInc;
-            pBlue  += layout.planes[C2PlanarLayout::PLANE_B].colInc;
-        }
-
-        if ((y & 1) == 0) {
-            dstU += dstStride >> 1;
-            dstV += dstStride >> 1;
-        }
-
-        pRed   -= layout.planes[C2PlanarLayout::PLANE_R].colInc * src.width();
-        pGreen -= layout.planes[C2PlanarLayout::PLANE_G].colInc * src.width();
-        pBlue  -= layout.planes[C2PlanarLayout::PLANE_B].colInc * src.width();
-        pRed   += layout.planes[C2PlanarLayout::PLANE_R].rowInc;
-        pGreen += layout.planes[C2PlanarLayout::PLANE_G].rowInc;
-        pBlue  += layout.planes[C2PlanarLayout::PLANE_B].rowInc;
-
-        dstY += dstStride;
-    }
 }
 
 }  // namespace
@@ -991,33 +940,63 @@ c2_status_t C2SoftAvcEnc::setEncodeArgs(
     int32_t uStride = layout.planes[C2PlanarLayout::PLANE_U].rowInc;
     int32_t vStride = layout.planes[C2PlanarLayout::PLANE_V].rowInc;
 
+    uint32_t width = mIntf->getWidth();
+    uint32_t height = mIntf->getHeight();
+    // width and height are always even (as block size is 16x16)
+    CHECK_EQ((width & 1u), 0u);
+    CHECK_EQ((height & 1u), 0u);
+    size_t yPlaneSize = width * height;
+
     switch (layout.type) {
         case C2PlanarLayout::TYPE_RGB:
             // fall-through
         case C2PlanarLayout::TYPE_RGBA: {
-            size_t yPlaneSize = mIntf->getWidth() * mIntf->getHeight();
             ALOGV("yPlaneSize = %zu", yPlaneSize);
-            std::unique_ptr<uint8_t[]> freeBuffer;
-            if (mFreeConversionBuffers.empty()) {
-                freeBuffer.reset(new uint8_t[yPlaneSize * 3 / 2]);
-            } else {
-                freeBuffer.swap(mFreeConversionBuffers.front());
-                mFreeConversionBuffers.pop_front();
-            }
-            yPlane = freeBuffer.get();
-            mConversionBuffersInUse.push_back(std::move(freeBuffer));
+            MemoryBlock conversionBuffer = mConversionBuffers.fetch(yPlaneSize * 3 / 2);
+            mConversionBuffersInUse.emplace(conversionBuffer.data(), conversionBuffer);
+            yPlane = conversionBuffer.data();
             uPlane = yPlane + yPlaneSize;
             vPlane = uPlane + yPlaneSize / 4;
-            yStride = mIntf->getWidth();
+            yStride = width;
             uStride = vStride = yStride / 2;
-            ConvertRGBToPlanarYUV(yPlane, yStride, mIntf->getHeight(), *input);
+            ConvertRGBToPlanarYUV(yPlane, yStride, height, conversionBuffer.size(), *input);
             break;
         }
-        case C2PlanarLayout::TYPE_YUV:
-            // fall-through
-        case C2PlanarLayout::TYPE_YUVA:
-            // Do nothing
+        case C2PlanarLayout::TYPE_YUV: {
+            if (!IsYUV420(*input)) {
+                ALOGE("input is not YUV420");
+                return C2_BAD_VALUE;
+            }
+
+            if (layout.planes[layout.PLANE_Y].colInc == 1
+                    && layout.planes[layout.PLANE_U].colInc == 1
+                    && layout.planes[layout.PLANE_V].colInc == 1) {
+                // I420 compatible - already set up above
+                break;
+            }
+
+            // copy to I420
+            yStride = width;
+            uStride = vStride = yStride / 2;
+            MemoryBlock conversionBuffer = mConversionBuffers.fetch(yPlaneSize * 3 / 2);
+            mConversionBuffersInUse.emplace(conversionBuffer.data(), conversionBuffer);
+            MediaImage2 img = CreateYUV420PlanarMediaImage2(width, height, yStride, height);
+            status_t err = ImageCopy(conversionBuffer.data(), &img, *input);
+            if (err != OK) {
+                ALOGE("Buffer conversion failed: %d", err);
+                return C2_BAD_VALUE;
+            }
+            yPlane = conversionBuffer.data();
+            uPlane = yPlane + yPlaneSize;
+            vPlane = uPlane + yPlaneSize / 4;
             break;
+
+        }
+
+        case C2PlanarLayout::TYPE_YUVA:
+            ALOGE("YUVA plane type is not supported");
+            return C2_BAD_VALUE;
+
         default:
             ALOGE("Unrecognized plane type: %d", layout.type);
             return C2_BAD_VALUE;
@@ -1110,6 +1089,7 @@ void C2SoftAvcEnc::process(
         error = setEncodeArgs(
                 &s_encode_ip, &s_encode_op, NULL, header, kHeaderLength, timestamp);
         if (error != C2_OK) {
+            ALOGE("setEncodeArgs failed: %d", error);
             mSignalledError = true;
             work->workletsProcessed = 1u;
             work->result = C2_CORRUPTED;
@@ -1249,19 +1229,11 @@ void C2SoftAvcEnc::process(
     /* If encoder frees up an input buffer, mark it as free */
     if (freed != NULL) {
         if (mBuffers.count(freed) == 0u) {
-            work->workletsProcessed = 1u;
-            work->result = C2_CORRUPTED;
-            return;
-        }
-        // Release input buffer reference
-        mBuffers.erase(freed);
-
-        auto it = std::find_if(
-                mConversionBuffersInUse.begin(), mConversionBuffersInUse.end(),
-                [freed](const auto &elem) { return elem.get() == freed; });
-        if (it != mConversionBuffersInUse.end()) {
-            mFreeConversionBuffers.push_back(std::move(*it));
-            mConversionBuffersInUse.erase(it);
+            ALOGD("buffer not tracked");
+        } else {
+            // Release input buffer reference
+            mBuffers.erase(freed);
+            mConversionBuffersInUse.erase(freed);
         }
     }
 

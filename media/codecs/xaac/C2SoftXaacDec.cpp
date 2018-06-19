@@ -299,10 +299,13 @@ void C2SoftXaacDec::process(const std::unique_ptr<C2Work>& work,
     }
     uint8_t* inBuffer = nullptr;
     uint32_t inBufferLength = 0;
-    C2ReadView view =
-        work->input.buffers[0]->data().linearBlocks().front().map().get();
+    C2ReadView view = mDummyReadView;
     size_t offset = 0u;
-    size_t size = view.capacity();
+    size_t size = 0u;
+    if (!work->input.buffers.empty()) {
+        view = work->input.buffers[0]->data().linearBlocks().front().map().get();
+        size = view.capacity();
+    }
     if (size && view.error()) {
         ALOGE("read view map failed %d", view.error());
         work->result = view.error();
@@ -314,6 +317,12 @@ void C2SoftXaacDec::process(const std::unique_ptr<C2Work>& work,
         (work->input.flags & C2FrameData::FLAG_CODEC_CONFIG) != 0;
 
     if (codecConfig) {
+        if (size == 0u) {
+            ALOGE("empty codec config");
+            mSignalledError = true;
+            work->result = C2_CORRUPTED;
+            return;
+        }
         // const_cast because of libAACdec method signature.
         inBuffer = const_cast<uint8_t*>(view.data() + offset);
         inBufferLength = size;

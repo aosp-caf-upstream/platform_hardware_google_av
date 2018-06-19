@@ -35,6 +35,59 @@ static constexpr int64_t kRegisterTimeoutUs = 500000; // 0.5 sec
 static constexpr int64_t kCleanUpDurationUs = 1000000; // TODO: 1 sec tune
 static constexpr int64_t kClientTimeoutUs = 5000000; // TODO: 5 secs tune
 
+/**
+ * The holder of the cookie of remote IClientManager.
+ * The cookie is process locally unique for each IClientManager.
+ * (The cookie is used to notify death of clients to bufferpool process.)
+ */
+class ClientManagerCookieHolder {
+public:
+    /**
+     * Creates a cookie holder for remote IClientManager(s).
+     */
+    ClientManagerCookieHolder();
+
+    /**
+     * Gets a cookie for a remote IClientManager.
+     *
+     * @param manager   the specified remote IClientManager.
+     * @param added     true when the specified remote IClientManager is added
+     *                  newly, false otherwise.
+     *
+     * @return the process locally unique cookie for the specified IClientManager.
+     */
+    uint64_t getCookie(const sp<IClientManager> &manager, bool *added);
+
+private:
+    uint64_t mSeqId;
+    std::mutex mLock;
+    std::list<std::pair<const wp<IClientManager>, uint64_t>> mManagers;
+};
+
+ClientManagerCookieHolder::ClientManagerCookieHolder() : mSeqId(0){}
+
+uint64_t ClientManagerCookieHolder::getCookie(
+        const sp<IClientManager> &manager,
+        bool *added) {
+    std::lock_guard<std::mutex> lock(mLock);
+    for (auto it = mManagers.begin(); it != mManagers.end();) {
+        const sp<IClientManager> key = it->first.promote();
+        if (key) {
+            if (interfacesEqual(key, manager)) {
+                *added = false;
+                return it->second;
+            }
+            ++it;
+        } else {
+            it = mManagers.erase(it);
+        }
+    }
+    uint64_t id = mSeqId++;
+    *added = true;
+    mManagers.push_back(std::make_pair(manager, id));
+    return id;
+}
+
 class ClientManager::Impl {
 public:
     Impl();
@@ -100,6 +153,7 @@ private:
                 mClients;
     } mActive;
 
+    ClientManagerCookieHolder mRemoteClientCookies;
 };
 
 ClientManager::Impl::Impl() {}
@@ -167,6 +221,7 @@ ResultStatus ClientManager::Impl::registerSender(
         ConnectionId senderId,
         ConnectionId *receiverId) {
     sp<IAccessor> accessor;
+    bool local = false;
     {
         std::lock_guard<std::mutex> lock(mActive.mMutex);
         auto it = mActive.mClients.find(senderId);
@@ -174,6 +229,7 @@ ResultStatus ClientManager::Impl::registerSender(
             return ResultStatus::NOT_FOUND;
         }
         it->second->getAccessor(&accessor);
+        local = it->second->isLocal();
     }
     ResultStatus rs = ResultStatus::CRITICAL_ERROR;
     if (accessor) {
@@ -187,6 +243,17 @@ ResultStatus ClientManager::Impl::registerSender(
                 });
         if (!transResult.isOk()) {
             return ResultStatus::CRITICAL_ERROR;
+        } else if (local && rs == ResultStatus::OK) {
+            sp<ConnectionDeathRecipient> recipient = Accessor::getConnectionDeathRecipient();
+            if (recipient)  {
+                ALOGV("client death recipient registered %lld", (long long)*receiverId);
+                bool added;
+                uint64_t cookie = mRemoteClientCookies.getCookie(receiver, &added);
+                recipient->addCookieToConnection(cookie, *receiverId);
+                if (added) {
+                    Return<bool> transResult = receiver->linkToDeath(recipient, cookie);
+                }
+            }
         }
     }
     return rs;

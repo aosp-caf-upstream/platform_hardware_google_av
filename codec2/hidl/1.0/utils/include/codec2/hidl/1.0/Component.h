@@ -78,7 +78,7 @@ struct Component : public Configurable<IComponent> {
     typedef ::android::hardware::graphics::bufferqueue::V1_0::
             IGraphicBufferProducer HGraphicBufferProducer;
 
-    // Methods from gIComponent follow.
+    // Methods from IComponent follow.
     virtual Return<Status> queue(const WorkBundle& workBundle) override;
     virtual Return<void> flush(flush_cb _hidl_cb) override;
     virtual Return<Status> drain(bool withEos) override;

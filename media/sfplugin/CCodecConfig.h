@@ -27,6 +27,7 @@
 
 #include <utils/RefBase.h>
 
+#include "InputSurfaceWrapper.h"
 #include "ReflectedParamUpdater.h"
 
 namespace android {
@@ -111,6 +112,9 @@ struct CCodecConfig {
 
     sp<AMessage> mInputFormat;
     sp<AMessage> mOutputFormat;
+
+    std::shared_ptr<InputSurfaceWrapper> mInputSurface;
+    std::unique_ptr<InputSurfaceWrapper::Config> mISConfig;
 
     /// the current configuration. Updated after configure() and based on configUpdate in
     /// onWorkDone

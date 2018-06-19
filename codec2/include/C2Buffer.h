@@ -961,10 +961,9 @@ public:
         return C2_OMITTED;
     }
 
+    virtual ~C2BlockPool() = default;
 protected:
     C2BlockPool() = default;
-
-    virtual ~C2BlockPool() = default;
 };
 
 /// @}

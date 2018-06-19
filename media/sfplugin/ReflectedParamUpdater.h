@@ -96,21 +96,39 @@ public:
                           C2ParamDescriptor::IS_READ_ONLY) {
         addParamDesc(std::make_shared<C2ParamDescriptor>(
                 C2Param::Index(T::PARAM_TYPE), attrib, name.c_str()),
-                C2StructDescriptor((T*)nullptr));
+                C2StructDescriptor((T*)nullptr), nullptr /* descriptor */);
     }
 
     /**
-     * Adds fields of a parameter described by the struct descriptor, that contains only builtin
-     * field types/
+     * Adds fields of a structure (or a parameater) described by the struct descriptor. If
+     * reflector is provided, fields of sub-structures are also added. Otherwise, only top-level
+     * fundamental typed fields (arithmetic, string and blob) are added.
      *
      * \param paramDesc parameter descriptor
      * \param fieldDesc field descriptor
+     * \param path path/name of the structure (field or parent parameter)
+     * \param offset offset of the structure in the parameter
+     * \param reflector  C2ParamReflector object for C2Param reflection (may be null)
+     */
+    void addParamStructDesc(
+            std::shared_ptr<C2ParamDescriptor> paramDesc, C2String path, size_t offset,
+            const C2StructDescriptor &structDesc,
+            const std::shared_ptr<C2ParamReflector> &reflector);
+
+    /**
+     * Adds fields of a parameter described by the struct descriptor. If reflector is provided,
+     * fields of sub-structures are also added. Otherwise, only top-level fundamental typed fields
+     * (arithmetic, string and blob) are added.
+     *
+     * \param paramDesc parameter descriptor
+     * \param fieldDesc field descriptor
+     * \param reflector  C2ParamReflector object for C2Param reflection (may be null)
      * \param markVendor TEMP if true, prefix vendor parameter names with "vendor."
      */
     void addParamDesc(
             std::shared_ptr<C2ParamDescriptor> paramDesc, const C2StructDescriptor &structDesc,
+            const std::shared_ptr<C2ParamReflector> &reflector,
             bool markVendor = true);
-
 
     /**
      * Returns the name of the parameter for an index.

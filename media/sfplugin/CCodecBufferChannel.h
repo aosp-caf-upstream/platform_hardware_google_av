@@ -130,7 +130,6 @@ public:
     class Buffers;
     class InputBuffers;
     class OutputBuffers;
-    class OutputBufferQueue;
 
 private:
     class QueueGuard;
@@ -213,7 +212,6 @@ private:
         uint32_t generation;
     };
     Mutexed<OutputSurface> mOutputSurface;
-    std::unique_ptr<OutputBufferQueue> mOutputBufferQueue;
 
     struct BlockPools {
         C2Allocator::id_t inputAllocatorId;
