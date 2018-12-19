@@ -78,6 +78,11 @@ public:
                 .withFields({C2F(mBitrate, value).inRange(1, 21000000)})
                 .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
                 .build());
+
+        addParameter(
+                DefineParam(mInputMaxBufSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 32768))
+                .build());
     }
 
 private:
@@ -88,6 +93,7 @@ private:
     std::shared_ptr<C2StreamSampleRateInfo::output> mSampleRate;
     std::shared_ptr<C2StreamChannelCountInfo::output> mChannelCount;
     std::shared_ptr<C2BitrateTuning::input> mBitrate;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mInputMaxBufSize;
 };
 
 C2SoftFlacDec::C2SoftFlacDec(
@@ -100,7 +106,7 @@ C2SoftFlacDec::C2SoftFlacDec(
 }
 
 C2SoftFlacDec::~C2SoftFlacDec() {
-    delete mFLACDecoder;
+    onRelease();
 }
 
 c2_status_t C2SoftFlacDec::onInit() {
@@ -114,15 +120,18 @@ c2_status_t C2SoftFlacDec::onStop() {
     mHasStreamInfo = false;
     mSignalledError = false;
     mSignalledOutputEos = false;
-    mInputBufferCount = 0;
     return C2_OK;
 }
 
 void C2SoftFlacDec::onReset() {
+    mInputBufferCount = 0;
     (void)onStop();
 }
 
 void C2SoftFlacDec::onRelease() {
+    mInputBufferCount = 0;
+    if (mFLACDecoder) delete mFLACDecoder;
+    mFLACDecoder = nullptr;
 }
 
 c2_status_t C2SoftFlacDec::onFlush_sm() {

@@ -18,11 +18,12 @@
 #define SIMPLE_C2_COMPONENT_H_
 
 #include <list>
-#include <thread>
 #include <unordered_map>
 
 #include <C2Component.h>
 
+#include <media/stagefright/foundation/AHandler.h>
+#include <media/stagefright/foundation/ALooper.h>
 #include <media/stagefright/foundation/Mutexed.h>
 
 namespace android {
@@ -32,7 +33,7 @@ class SimpleC2Component
 public:
     explicit SimpleC2Component(
             const std::shared_ptr<C2ComponentInterface> &intf);
-    virtual ~SimpleC2Component() = default;
+    virtual ~SimpleC2Component();
 
     // C2Component
     // From C2Component
@@ -49,10 +50,8 @@ public:
     virtual c2_status_t release() override;
     virtual std::shared_ptr<C2ComponentInterface> intf() override;
 
-    // for thread
-    inline bool exitRequested() { return mExitRequested; }
-    void processQueue();
-    void signalExit();
+    // for handler
+    bool processQueue();
 
 protected:
     /**
@@ -141,7 +140,30 @@ protected:
 
 private:
     const std::shared_ptr<C2ComponentInterface> mIntf;
-    std::atomic_bool mExitRequested;
+
+    class WorkHandler : public AHandler {
+    public:
+        enum {
+            kWhatProcess,
+            kWhatInit,
+            kWhatStart,
+            kWhatStop,
+            kWhatReset,
+            kWhatRelease,
+        };
+
+        WorkHandler();
+        ~WorkHandler() override = default;
+
+        void setComponent(const std::shared_ptr<SimpleC2Component> &thiz);
+
+    protected:
+        void onMessageReceived(const sp<AMessage> &msg) override;
+
+    private:
+        std::weak_ptr<SimpleC2Component> mThiz;
+        bool mRunning;
+    };
 
     enum {
         UNINITIALIZED,
@@ -153,10 +175,12 @@ private:
         ExecState() : mState(UNINITIALIZED) {}
 
         int mState;
-        std::thread mThread;
         std::shared_ptr<C2Component::Listener> mListener;
     };
     Mutexed<ExecState> mExecState;
+
+    sp<ALooper> mLooper;
+    sp<WorkHandler> mHandler;
 
     class WorkQueue {
     public:
@@ -177,8 +201,6 @@ private:
         }
         void clear();
 
-        Condition mCondition;
-
     private:
         struct Entry {
             std::unique_ptr<C2Work> work;
@@ -194,18 +216,9 @@ private:
     typedef std::unordered_map<uint64_t, std::unique_ptr<C2Work>> PendingWork;
     Mutexed<PendingWork> mPendingWork;
 
-    struct ExitMonitor {
-        inline ExitMonitor() : mExited(false) {}
-        Condition mCondition;
-        bool mExited;
-    };
-    Mutexed<ExitMonitor> mExitMonitor;
-
     std::shared_ptr<C2BlockPool> mOutputBlockPool;
 
     SimpleC2Component() = delete;
-
-    void requestExitAndWait(std::function<void()> job);
 };
 
 }  // namespace android

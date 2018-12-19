@@ -72,11 +72,11 @@ public:
                 .withDefault(new C2StreamPictureSizeInfo::output(0u, 176, 144))
                 .withFields({
 #ifdef MPEG4
-                    C2F(mSize, width).inRange(16, 352, 2),
-                    C2F(mSize, height).inRange(16, 288, 2),
+                    C2F(mSize, width).inRange(2, 1920, 2),
+                    C2F(mSize, height).inRange(2, 1088, 2),
 #else
-                    C2F(mSize, width).inRange(16, 352, 16),
-                    C2F(mSize, height).inRange(16, 288, 16),
+                    C2F(mSize, width).inRange(2, 352, 2),
+                    C2F(mSize, height).inRange(2, 288, 2),
 #endif
                 })
                 .withSetter(SizeSetter)
@@ -95,7 +95,12 @@ public:
                             C2Config::LEVEL_MP4V_0B,
                             C2Config::LEVEL_MP4V_1,
                             C2Config::LEVEL_MP4V_2,
-                            C2Config::LEVEL_MP4V_3})
+                            C2Config::LEVEL_MP4V_3,
+                            C2Config::LEVEL_MP4V_3B,
+                            C2Config::LEVEL_MP4V_4,
+                            C2Config::LEVEL_MP4V_4A,
+                            C2Config::LEVEL_MP4V_5,
+                            C2Config::LEVEL_MP4V_6})
                 })
                 .withSetter(ProfileLevelSetter, mSize)
                 .build());
@@ -118,6 +123,38 @@ public:
                 .withSetter(ProfileLevelSetter, mSize)
                 .build());
 #endif
+
+        addParameter(
+                DefineParam(mMaxSize, C2_PARAMKEY_MAX_PICTURE_SIZE)
+#ifdef MPEG4
+                .withDefault(new C2StreamMaxPictureSizeTuning::output(0u, 1920, 1088))
+#else
+                .withDefault(new C2StreamMaxPictureSizeTuning::output(0u, 352, 288))
+#endif
+                .withFields({
+#ifdef MPEG4
+                    C2F(mSize, width).inRange(2, 1920, 2),
+                    C2F(mSize, height).inRange(2, 1088, 2),
+#else
+                    C2F(mSize, width).inRange(2, 352, 2),
+                    C2F(mSize, height).inRange(2, 288, 2),
+#endif
+                })
+                .withSetter(MaxPictureSizeSetter, mSize)
+                .build());
+
+        addParameter(
+                DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+#ifdef MPEG4
+                .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, 1920 * 1088 * 3 / 2))
+#else
+                .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, 352 * 288 * 3 / 2))
+#endif
+                .withFields({
+                    C2F(mMaxInputSize, value).any(),
+                })
+                .calculatedAs(MaxInputSizeSetter, mMaxSize)
+                .build());
 
         C2ChromaOffsetStruct locations[1] = { C2ChromaOffsetStruct::ITU_YUV_420_0() };
         std::shared_ptr<C2StreamColorInfo::output> defaultColorInfo =
@@ -144,7 +181,7 @@ public:
                 .build());
     }
 
-    static C2R SizeSetter(bool mayBlock, const C2P<C2VideoSizeStreamInfo::output> &oldMe,
+    static C2R SizeSetter(bool mayBlock, const C2P<C2StreamPictureSizeInfo::output> &oldMe,
                           C2P<C2VideoSizeStreamInfo::output> &me) {
         (void)mayBlock;
         C2R res = C2R::Ok();
@@ -159,6 +196,28 @@ public:
         return res;
     }
 
+    static C2R MaxPictureSizeSetter(bool mayBlock, C2P<C2StreamMaxPictureSizeTuning::output> &me,
+                                    const C2P<C2StreamPictureSizeInfo::output> &size) {
+        (void)mayBlock;
+        // TODO: get max width/height from the size's field helpers vs. hardcoding
+#ifdef MPEG4
+        me.set().width = c2_min(c2_max(me.v.width, size.v.width), 1920u);
+        me.set().height = c2_min(c2_max(me.v.height, size.v.height), 1088u);
+#else
+        me.set().width = c2_min(c2_max(me.v.width, size.v.width), 352u);
+        me.set().height = c2_min(c2_max(me.v.height, size.v.height), 288u);
+#endif
+        return C2R::Ok();
+    }
+
+    static C2R MaxInputSizeSetter(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input> &me,
+                                  const C2P<C2StreamMaxPictureSizeTuning::output> &maxSize) {
+        (void)mayBlock;
+        // assume compression ratio of 1
+        me.set().value = (((maxSize.v.width + 15) / 16) * ((maxSize.v.height + 15) / 16) * 384);
+        return C2R::Ok();
+    }
+
     static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::input> &me,
                                   const C2P<C2StreamPictureSizeInfo::output> &size) {
         (void)mayBlock;
@@ -167,9 +226,14 @@ public:
         return C2R::Ok();
     }
 
+    uint32_t getMaxWidth() const { return mMaxSize->width; }
+    uint32_t getMaxHeight() const { return mMaxSize->height; }
+
 private:
     std::shared_ptr<C2StreamProfileLevelInfo::input> mProfileLevel;
-    std::shared_ptr<C2VideoSizeStreamInfo::output> mSize;
+    std::shared_ptr<C2StreamPictureSizeInfo::output> mSize;
+    std::shared_ptr<C2StreamMaxPictureSizeTuning::output> mMaxSize;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mMaxInputSize;
     std::shared_ptr<C2StreamColorInfo::output> mColorInfo;
     std::shared_ptr<C2StreamPixelFormatInfo::output> mPixelFormat;
 };
@@ -321,10 +385,10 @@ c2_status_t C2SoftMpeg4Dec::ensureDecoderState(const std::shared_ptr<C2BlockPool
         return C2_CORRUPTED;
     }
 
-    uint32_t outSize = align(mWidth, 16) * align(mHeight, 16) * 3 / 2;
+    mOutputBufferSize = align(mIntf->getMaxWidth(), 16) * align(mIntf->getMaxHeight(), 16) * 3 / 2;
     for (int32_t i = 0; i < kNumOutputBuffers; ++i) {
         if (!mOutputBuffer[i]) {
-            mOutputBuffer[i] = (uint8_t *)malloc(outSize * sizeof(uint8_t));
+            mOutputBuffer[i] = (uint8_t *)malloc(mOutputBufferSize);
             if (!mOutputBuffer[i]) {
                 return C2_NO_MEMORY;
             }
@@ -380,7 +444,7 @@ bool C2SoftMpeg4Dec::handleResChange(const std::unique_ptr<C2Work> &work) {
             int32_t vol_size = 0;
 
             if (!PVInitVideoDecoder(
-                    mDecHandle, vol_data, &vol_size, 1, mWidth, mHeight, H263_MODE)) {
+                    mDecHandle, vol_data, &vol_size, 1, mIntf->getMaxWidth(), mIntf->getMaxHeight(), H263_MODE)) {
                 ALOGE("Error in PVInitVideoDecoder H263_MODE while resChanged was set to true");
                 work->result = C2_CORRUPTED;
                 mSignalledError = true;
@@ -432,6 +496,7 @@ void C2SoftMpeg4Dec::process(
     work->worklets.front()->output.configUpdate.clear();
     if (mSignalledError || mSignalledOutputEos) {
         work->result = C2_BAD_VALUE;
+        work->workletsProcessed = 1u;
         return;
     }
 
@@ -479,12 +544,12 @@ void C2SoftMpeg4Dec::process(
             vol_size = inSize;
         }
         MP4DecodingMode mode = (mIsMpeg4) ? MPEG4_MODE : H263_MODE;
-
         if (!PVInitVideoDecoder(
                 mDecHandle, vol_data, &vol_size, 1,
-                mWidth, mHeight, mode)) {
+                mIntf->getMaxWidth(), mIntf->getMaxHeight(), mode)) {
             ALOGE("PVInitVideoDecoder failed. Unsupported content?");
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }
@@ -493,6 +558,7 @@ void C2SoftMpeg4Dec::process(
         if (mode != actualMode) {
             ALOGE("Decoded mode not same as actual mode of the decoder");
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }
@@ -510,6 +576,7 @@ void C2SoftMpeg4Dec::process(
                 ALOGE("Config update size failed");
                 mSignalledError = true;
                 work->result = C2_CORRUPTED;
+                work->workletsProcessed = 1u;
                 return;
             }
         }
@@ -525,20 +592,22 @@ void C2SoftMpeg4Dec::process(
         if (C2_OK != err) {
             mSignalledError = true;
             work->result = err;
+            work->workletsProcessed = 1u;
             return;
         }
         C2GraphicView wView = mOutBlock->map().get();
         if (wView.error()) {
             ALOGE("graphic view map failed %d", wView.error());
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             return;
         }
 
-        uint32_t outSize = align(mWidth, 16) * align(mHeight, 16) * 3 / 2;
         uint32_t yFrameSize = sizeof(uint8) * mDecHandle->size;
-        if (outSize < yFrameSize * 3 / 2){
-            ALOGE("Too small output buffer: %d bytes", outSize);
+        if (mOutputBufferSize < yFrameSize * 3 / 2){
+            ALOGE("Too small output buffer: %zu bytes", mOutputBufferSize);
             work->result = C2_NO_MEMORY;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }
@@ -560,6 +629,7 @@ void C2SoftMpeg4Dec::process(
                     mOutputBuffer[mNumSamplesOutput & 1]) != PV_TRUE) {
             ALOGE("failed to decode vop header.");
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }
@@ -569,6 +639,7 @@ void C2SoftMpeg4Dec::process(
         bool resChange = handleResChange(work);
         if (mIsMpeg4 && resChange) {
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         } else if (resChange) {
@@ -582,6 +653,7 @@ void C2SoftMpeg4Dec::process(
                 ALOGE("Config update size failed");
                 mSignalledError = true;
                 work->result = C2_CORRUPTED;
+                work->workletsProcessed = 1u;
                 return;
             }
             continue;
@@ -590,11 +662,13 @@ void C2SoftMpeg4Dec::process(
         if (PVDecodeVopBody(mDecHandle, &tmpInSize) != PV_TRUE) {
             ALOGE("failed to decode video frame.");
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }
         if (handleResChange(work)) {
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }

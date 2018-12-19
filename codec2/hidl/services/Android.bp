@@ -15,7 +15,6 @@ cc_binary {
         "libavservices_minijail_vendor",
         "libbinder",
         "libcodec2_hidl_utils@1.0",
-        "libcutils",
         "libhidlbase",
         "libhidltransport",
         "libhwbinder",
@@ -24,7 +23,6 @@ cc_binary {
         "libstagefright_omx",
         "libstagefright_xmlparser",
         "libutils",
-        "libv4l2_c2componentstore",
     ],
 
     arch: {
@@ -90,9 +88,7 @@ cc_library_shared {
         "libstagefright_soft_c2flacdec.vendor",
         "libstagefright_soft_c2flacenc.vendor",
         "libstagefright_soft_c2gsmdec.vendor",
-        "libstagefright_soft_c2xaacdec.vendor",
     ],
-
     compile_multilib: "32",
 }
 

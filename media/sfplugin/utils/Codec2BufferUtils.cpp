@@ -145,6 +145,7 @@ MediaImage2 CreateYUV420PlanarMediaImage2(
         .mWidth = width,
         .mHeight = height,
         .mBitDepth = 8,
+        .mBitDepthAllocated = 8,
         .mPlane = {
             {
                 .mOffset = 0,
@@ -179,6 +180,7 @@ MediaImage2 CreateYUV420SemiPlanarMediaImage2(
         .mWidth = width,
         .mHeight = height,
         .mBitDepth = 8,
+        .mBitDepthAllocated = 8,
         .mPlane = {
             {
                 .mOffset = 0,

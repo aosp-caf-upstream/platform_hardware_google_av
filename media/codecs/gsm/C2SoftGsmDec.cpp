@@ -77,6 +77,11 @@ class C2SoftGsmDec::IntfImpl : public C2InterfaceHelper {
                 .withFields({C2F(mBitrate, value).equalTo(13200)})
                 .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
                 .build());
+
+        addParameter(
+                DefineParam(mInputMaxBufSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 1024 / MSGSM_IN_FRM_SZ * MSGSM_IN_FRM_SZ))
+                .build());
     }
 
    private:
@@ -87,6 +92,7 @@ class C2SoftGsmDec::IntfImpl : public C2InterfaceHelper {
     std::shared_ptr<C2StreamSampleRateInfo::output> mSampleRate;
     std::shared_ptr<C2StreamChannelCountInfo::output> mChannelCount;
     std::shared_ptr<C2BitrateTuning::input> mBitrate;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mInputMaxBufSize;
 };
 
 C2SoftGsmDec::C2SoftGsmDec(const char *name, c2_node_id_t id,
@@ -179,7 +185,7 @@ void C2SoftGsmDec::process(
     C2ReadView rView = mDummyReadView;
     size_t inOffset = 0u;
     size_t inSize = 0u;
-    if (work->input.buffers.empty()) {
+    if (!work->input.buffers.empty()) {
         rView = work->input.buffers[0]->data().linearBlocks().front().map().get();
         inSize = rView.capacity();
         if (inSize && rView.error()) {

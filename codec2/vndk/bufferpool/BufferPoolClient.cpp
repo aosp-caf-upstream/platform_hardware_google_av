@@ -79,7 +79,9 @@ private:
             int64_t timestampUs);
 
     bool postReceiveResult(
-            BufferId bufferId, TransactionId transactionId, bool result);
+            BufferId bufferId, TransactionId transactionId, bool result, bool *needsSync);
+
+    void trySyncFromRemote();
 
     bool syncReleased();
 
@@ -92,7 +94,6 @@ private:
     ResultStatus fetchBufferHandle(
             TransactionId transactionId, BufferId bufferId,
             native_handle_t **handle);
-
 
     struct BlockPoolDataDtor;
     struct ClientBuffer;
@@ -136,6 +137,11 @@ private:
         std::list<BufferId> mReleasedIds;
         std::unique_ptr<BufferStatusChannel> mStatusChannel;
     } mReleasing;
+
+    // This lock is held during synchronization from remote side.
+    // In order to minimize remote calls and locking durtaion, this lock is held
+    // by best effort approach using try_lock().
+    std::mutex mRemoteSyncLock;
 };
 
 struct BufferPoolClient::Impl::BlockPoolDataDtor {
@@ -277,17 +283,19 @@ BufferPoolClient::Impl::Impl(const sp<IAccessor> &accessor)
 }
 
 bool BufferPoolClient::Impl::isActive(int64_t *lastTransactionUs, bool clearCache) {
+    bool active = false;
     {
         std::lock_guard<std::mutex> lock(mCache.mLock);
         syncReleased();
         evictCaches(clearCache);
         *lastTransactionUs = mCache.mLastChangeUs;
+        active = mCache.mActive > 0;
     }
     if (mValid && mLocal && mLocalConnection) {
         mLocalConnection->cleanUp(clearCache);
         return true;
     }
-    return mCache.mActive > 0;
+    return active;
 }
 
 ResultStatus BufferPoolClient::Impl::allocate(
@@ -410,12 +418,16 @@ ResultStatus BufferPoolClient::Impl::receive(
             mCache.mCreateCv.wait(lock);
         }
     }
+    bool needsSync = false;
     bool posted = postReceiveResult(bufferId, transactionId,
-                                      *buffer ? true : false);
+                                      *buffer ? true : false, &needsSync);
     ALOGV("client receive %lld - %u : %s (%d)", (long long)mConnectionId, bufferId,
           *buffer ? "ok" : "fail", posted);
     if (mValid && mLocal && mLocalConnection) {
         mLocalConnection->cleanUp(false);
+    }
+    if (needsSync && mRemoteConnection) {
+        trySyncFromRemote();
     }
     if (*buffer) {
         if (!posted) {
@@ -440,6 +452,7 @@ bool BufferPoolClient::Impl::postSend(
         BufferId bufferId, ConnectionId receiver,
         TransactionId *transactionId, int64_t *timestampUs) {
     bool ret = false;
+    bool needsSync = false;
     {
         std::lock_guard<std::mutex> lock(mReleasing.mLock);
         *timestampUs = getTimestampNow();
@@ -448,9 +461,13 @@ bool BufferPoolClient::Impl::postSend(
         ret =  mReleasing.mStatusChannel->postBufferStatusMessage(
                 *transactionId, bufferId, BufferStatus::TRANSFER_TO, mConnectionId,
                 receiver, mReleasing.mReleasingIds, mReleasing.mReleasedIds);
+        needsSync = !mLocal && mReleasing.mStatusChannel->needsSync();
     }
     if (mValid && mLocal && mLocalConnection) {
         mLocalConnection->cleanUp(false);
+    }
+    if (needsSync && mRemoteConnection) {
+        trySyncFromRemote();
     }
     return ret;
 }
@@ -482,14 +499,38 @@ bool BufferPoolClient::Impl::postReceive(
 }
 
 bool BufferPoolClient::Impl::postReceiveResult(
-        BufferId bufferId, TransactionId transactionId, bool result) {
+        BufferId bufferId, TransactionId transactionId, bool result, bool *needsSync) {
     std::lock_guard<std::mutex> lock(mReleasing.mLock);
     // TODO: retry, add timeout
-    return mReleasing.mStatusChannel->postBufferStatusMessage(
+    bool ret = mReleasing.mStatusChannel->postBufferStatusMessage(
             transactionId, bufferId,
             result ? BufferStatus::TRANSFER_OK : BufferStatus::TRANSFER_ERROR,
             mConnectionId, -1, mReleasing.mReleasingIds,
             mReleasing.mReleasedIds);
+    *needsSync = !mLocal && mReleasing.mStatusChannel->needsSync();
+    return ret;
+}
+
+void BufferPoolClient::Impl::trySyncFromRemote() {
+    if (mRemoteSyncLock.try_lock()) {
+        bool needsSync = false;
+        {
+            std::lock_guard<std::mutex> lock(mReleasing.mLock);
+            needsSync = mReleasing.mStatusChannel->needsSync();
+        }
+        if (needsSync) {
+            TransactionId transactionId = (mConnectionId << 32);
+            BufferId bufferId = Connection::SYNC_BUFFERID;
+            Return<void> transResult = mRemoteConnection->fetch(
+                    transactionId, bufferId,
+                    []
+                    (ResultStatus outStatus, Buffer outBuffer) {
+                        (void) outStatus;
+                        (void) outBuffer;
+                    });
+        }
+        mRemoteSyncLock.unlock();
+    }
 }
 
 // should have mCache.mLock
