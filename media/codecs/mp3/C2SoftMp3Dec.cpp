@@ -82,6 +82,11 @@ public:
                 .withFields({C2F(mBitrate, value).inRange(8000, 320000)})
                 .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
                 .build());
+
+        addParameter(
+                DefineParam(mInputMaxBufSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 8192))
+                .build());
     }
 
 private:
@@ -92,6 +97,7 @@ private:
     std::shared_ptr<C2StreamSampleRateInfo::output> mSampleRate;
     std::shared_ptr<C2StreamChannelCountInfo::output> mChannelCount;
     std::shared_ptr<C2BitrateTuning::input> mBitrate;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mInputMaxBufSize;
 };
 
 C2SoftMP3::C2SoftMP3(const char *name, c2_node_id_t id,
@@ -129,6 +135,7 @@ void C2SoftMP3::onReset() {
 }
 
 void C2SoftMP3::onRelease() {
+    mGaplessBytes = false;
     if (mDecoderBuf) {
         free(mDecoderBuf);
         mDecoderBuf = nullptr;
@@ -153,6 +160,7 @@ status_t C2SoftMP3::initDecoder() {
     pvmp3_InitDecoder(mConfig, mDecoderBuf);
 
     mIsFirst = true;
+    mGaplessBytes = false;
     mSignalledError = false;
     mSignalledOutputEos = false;
     mAnchorTimeStamp = 0;
@@ -349,7 +357,7 @@ void C2SoftMP3::process(
         }
     }
 
-    if (inSize == 0 && !eos) {
+    if (inSize == 0 && (!mGaplessBytes || !eos)) {
         work->worklets.front()->output.flags = work->input.flags;
         work->worklets.front()->output.buffers.clear();
         work->worklets.front()->output.ordinal = work->input.ordinal;
@@ -460,6 +468,7 @@ void C2SoftMP3::process(
     }
     if (mIsFirst) {
         mIsFirst = false;
+        mGaplessBytes = true;
         // The decoder delay is 529 samples, so trim that many samples off
         // the start of the first output buffer. This essentially makes this
         // decoder have zero delay, which the rest of the pipeline assumes.
@@ -476,6 +485,7 @@ void C2SoftMP3::process(
                 return;
              }
             ALOGV("Adding 529 samples at end");
+            mGaplessBytes = false;
             outSize += kPVMP3DecoderDelay * numChannels * sizeof(int16_t);
         }
     }

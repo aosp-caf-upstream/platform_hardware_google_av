@@ -121,13 +121,23 @@ struct C2SoftHevcDec : public SimpleC2Component {
     bool mSignalledOutputEos;
     bool mSignalledError;
 
-    // ColorAspects
-    Mutex mColorAspectsLock;
-    int mPreference;
-    ColorAspects mDefaultColorAspects;
-    ColorAspects mBitstreamColorAspects;
-    ColorAspects mFinalColorAspects;
-    bool mUpdateColorAspects;
+    // Color aspects. These are ISO values and are meant to detect changes in aspects to avoid
+    // converting them to C2 values for each frame
+    struct VuiColorAspects {
+        uint8_t primaries;
+        uint8_t transfer;
+        uint8_t coeffs;
+        uint8_t fullRange;
+
+        // default color aspects
+        VuiColorAspects()
+            : primaries(2), transfer(2), coeffs(2), fullRange(0) { }
+
+        bool operator==(const VuiColorAspects &o) {
+            return primaries == o.primaries && transfer == o.transfer && coeffs == o.coeffs
+                    && fullRange == o.fullRange;
+        }
+    } mBitstreamColorAspects;
 
     // profile
     struct timeval mTimeStart;

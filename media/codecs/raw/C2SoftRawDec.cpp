@@ -78,6 +78,11 @@ public:
                 .withFields({C2F(mBitrate, value).inRange(1, 10000000)})
                 .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
                 .build());
+
+        addParameter(
+                DefineParam(mInputMaxBufSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withConstValue(new C2StreamMaxBufferSizeInfo::input(0u, 64 * 1024))
+                .build());
     }
 
 private:
@@ -88,6 +93,7 @@ private:
     std::shared_ptr<C2StreamSampleRateInfo::output> mSampleRate;
     std::shared_ptr<C2StreamChannelCountInfo::output> mChannelCount;
     std::shared_ptr<C2BitrateTuning::input> mBitrate;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mInputMaxBufSize;
 };
 
 C2SoftRawDec::C2SoftRawDec(
