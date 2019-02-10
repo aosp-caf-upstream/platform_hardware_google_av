@@ -484,6 +484,9 @@ ResultStatus Accessor::Impl::BufferPool::addNewBuffer(
         const native_handle_t** handle) {
 
     BufferId bufferId = mSeq++;
+    if (mSeq == Connection::SYNC_BUFFERID) {
+        mSeq = 0;
+    }
     std::unique_ptr<InternalBuffer> buffer =
             std::make_unique<InternalBuffer>(
                     bufferId, alloc, allocSize, params);

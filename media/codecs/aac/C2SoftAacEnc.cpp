@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define LOG_NDEBUG 0
+//#define LOG_NDEBUG 0
 #define LOG_TAG "C2SoftAacEnc"
 #include <utils/Log.h>
 
@@ -80,11 +80,49 @@ public:
                 .withFields({C2F(mBitrate, value).inRange(8000, 960000)})
                 .withSetter(Setter<decltype(*mBitrate)>::NonStrictValueWithNoDeps)
                 .build());
+
+        addParameter(
+                DefineParam(mInputMaxBufSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, 8192))
+                .calculatedAs(MaxBufSizeCalculator, mChannelCount)
+                .build());
+
+        addParameter(
+                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                .withDefault(new C2StreamProfileLevelInfo::output(0u,
+                        C2Config::PROFILE_AAC_LC, C2Config::LEVEL_UNUSED))
+                .withFields({
+                    C2F(mProfileLevel, profile).oneOf({
+                            C2Config::PROFILE_AAC_LC,
+                            C2Config::PROFILE_AAC_HE,
+                            C2Config::PROFILE_AAC_HE_PS,
+                            C2Config::PROFILE_AAC_LD,
+                            C2Config::PROFILE_AAC_ELD}),
+                    C2F(mProfileLevel, level).oneOf({
+                            C2Config::LEVEL_UNUSED
+                    })
+                })
+                .withSetter(ProfileLevelSetter)
+                .build());
     }
 
     uint32_t getSampleRate() const { return mSampleRate->value; }
     uint32_t getChannelCount() const { return mChannelCount->value; }
     uint32_t getBitrate() const { return mBitrate->value; }
+    static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::output> &me) {
+        (void)mayBlock;
+        (void)me;  // TODO: validate
+        return C2R::Ok();
+    }
+
+    static C2R MaxBufSizeCalculator(
+            bool mayBlock,
+            C2P<C2StreamMaxBufferSizeInfo::input> &me,
+            const C2P<C2StreamChannelCountInfo::input> &channelCount) {
+        (void)mayBlock;
+        me.set().value = 1024 * sizeof(short) * channelCount.v.value;
+        return C2R::Ok();
+    }
 
 private:
     std::shared_ptr<C2StreamFormatConfig::input> mInputFormat;
@@ -94,6 +132,8 @@ private:
     std::shared_ptr<C2StreamSampleRateInfo::input> mSampleRate;
     std::shared_ptr<C2StreamChannelCountInfo::input> mChannelCount;
     std::shared_ptr<C2BitrateTuning::output> mBitrate;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mInputMaxBufSize;
+    std::shared_ptr<C2StreamProfileLevelInfo::output> mProfileLevel;
 };
 
 constexpr char COMPONENT_NAME[] = "c2.android.aac.encoder";
@@ -307,7 +347,7 @@ void C2SoftAacEnc::process(
 
     size_t numFrames = (capacity + mInputSize + (eos ? mNumBytesPerInputFrame - 1 : 0))
             / mNumBytesPerInputFrame;
-    ALOGV("capacity = %u; mInputSize = %zu; numFrames = %zu mNumBytesPerInputFrame = %u",
+    ALOGV("capacity = %zu; mInputSize = %zu; numFrames = %zu mNumBytesPerInputFrame = %u",
           capacity, mInputSize, numFrames, mNumBytesPerInputFrame);
 
     std::shared_ptr<C2LinearBlock> block;

@@ -38,6 +38,7 @@ int64_t getTimestampNow() {
 }
 
 static constexpr int kNumElementsInQueue = 1024*16;
+static constexpr int kMinElementsToSyncInQueue = 128;
 
 ResultStatus BufferStatusObserver::open(
         ConnectionId id, const QueueDescriptor** fmqDescPtr) {
@@ -103,6 +104,14 @@ BufferStatusChannel::BufferStatusChannel(
 
 bool BufferStatusChannel::isValid() {
     return mValid;
+}
+
+bool BufferStatusChannel::needsSync() {
+    if (mValid) {
+        size_t avail = mBufferStatusQueue->availableToWrite();
+        return avail + kMinElementsToSyncInQueue < kNumElementsInQueue;
+    }
+    return false;
 }
 
 void BufferStatusChannel::postBufferRelease(

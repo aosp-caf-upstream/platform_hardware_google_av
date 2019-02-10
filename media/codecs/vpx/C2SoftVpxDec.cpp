@@ -96,6 +96,34 @@ public:
                 })
                 .withSetter(ProfileLevelSetter, mSize)
                 .build());
+
+#if 0
+        // sample BT.2020 static info
+        mHdrStaticInfo = std::make_shared<C2StreamHdrStaticInfo::output>();
+        mHdrStaticInfo->mastering = {
+            .red   = { .x = 0.708,  .y = 0.292 },
+            .green = { .x = 0.170,  .y = 0.797 },
+            .blue  = { .x = 0.131,  .y = 0.046 },
+            .white = { .x = 0.3127, .y = 0.3290 },
+            .maxLuminance = 1000,
+            .minLuminance = 0.1,
+        };
+        mHdrStaticInfo->maxCll = 1000;
+        mHdrStaticInfo->maxFall = 120;
+
+        mHdrStaticInfo->maxLuminance = 0; // disable static info
+
+        helper->addStructDescriptors<C2MasteringDisplayColorVolumeStruct, C2ColorXyStruct>();
+        addParameter(
+                DefineParam(mHdrStaticInfo, C2_PARAMKEY_HDR_STATIC_INFO)
+                .withDefault(mHdrStaticInfo)
+                .withFields({
+                    C2F(mHdrStaticInfo, mastering.red.x).inRange(0, 1),
+                    // TODO
+                })
+                .withSetter(HdrStaticInfoSetter)
+                .build());
+#endif
 #else
         addParameter(
                 DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
@@ -103,6 +131,25 @@ public:
                         C2Config::PROFILE_UNUSED, C2Config::LEVEL_UNUSED))
                 .build());
 #endif
+
+        addParameter(
+                DefineParam(mMaxSize, C2_PARAMKEY_MAX_PICTURE_SIZE)
+                .withDefault(new C2StreamMaxPictureSizeTuning::output(0u, 320, 240))
+                .withFields({
+                    C2F(mSize, width).inRange(2, 2048, 2),
+                    C2F(mSize, height).inRange(2, 2048, 2),
+                })
+                .withSetter(MaxPictureSizeSetter, mSize)
+                .build());
+
+        addParameter(
+                DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+                .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, 320 * 240 * 3 / 4))
+                .withFields({
+                    C2F(mMaxInputSize, value).any(),
+                })
+                .calculatedAs(MaxInputSizeSetter, mMaxSize)
+                .build());
 
         C2ChromaOffsetStruct locations[1] = { C2ChromaOffsetStruct::ITU_YUV_420_0() };
         std::shared_ptr<C2StreamColorInfo::output> defaultColorInfo =
@@ -129,7 +176,7 @@ public:
                 .build());
     }
 
-    static C2R SizeSetter(bool mayBlock, const C2P<C2VideoSizeStreamInfo::output> &oldMe,
+    static C2R SizeSetter(bool mayBlock, const C2P<C2StreamPictureSizeInfo::output> &oldMe,
                           C2P<C2VideoSizeStreamInfo::output> &me) {
         (void)mayBlock;
         C2R res = C2R::Ok();
@@ -144,6 +191,24 @@ public:
         return res;
     }
 
+    static C2R MaxPictureSizeSetter(bool mayBlock, C2P<C2StreamMaxPictureSizeTuning::output> &me,
+                                    const C2P<C2StreamPictureSizeInfo::output> &size) {
+        (void)mayBlock;
+        // TODO: get max width/height from the size's field helpers vs. hardcoding
+        me.set().width = c2_min(c2_max(me.v.width, size.v.width), 2048u);
+        me.set().height = c2_min(c2_max(me.v.height, size.v.height), 2048u);
+        return C2R::Ok();
+    }
+
+    static C2R MaxInputSizeSetter(bool mayBlock, C2P<C2StreamMaxBufferSizeInfo::input> &me,
+                                  const C2P<C2StreamMaxPictureSizeTuning::output> &maxSize) {
+        (void)mayBlock;
+        // assume compression ratio of 2
+        me.set().value = (((maxSize.v.width + 63) / 64) * ((maxSize.v.height + 63) / 64) * 3072);
+        return C2R::Ok();
+    }
+
+
     static C2R ProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::input> &me,
                                   const C2P<C2StreamPictureSizeInfo::output> &size) {
         (void)mayBlock;
@@ -154,9 +219,16 @@ public:
 
 private:
     std::shared_ptr<C2StreamProfileLevelInfo::input> mProfileLevel;
-    std::shared_ptr<C2VideoSizeStreamInfo::output> mSize;
+    std::shared_ptr<C2StreamPictureSizeInfo::output> mSize;
+    std::shared_ptr<C2StreamMaxPictureSizeTuning::output> mMaxSize;
+    std::shared_ptr<C2StreamMaxBufferSizeInfo::input> mMaxInputSize;
     std::shared_ptr<C2StreamColorInfo::output> mColorInfo;
     std::shared_ptr<C2StreamPixelFormatInfo::output> mPixelFormat;
+#ifdef VP9
+#if 0
+    std::shared_ptr<C2StreamHdrStaticInfo::output> mHdrStaticInfo;
+#endif
+#endif
 };
 
 C2SoftVpxDec::C2SoftVpxDec(
@@ -369,6 +441,7 @@ void C2SoftVpxDec::process(
         if (err != VPX_CODEC_OK) {
             ALOGE("on2 decoder failed to decode frame. err: %d", err);
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             mSignalledError = true;
             return;
         }
@@ -438,6 +511,7 @@ bool C2SoftVpxDec::outputBuffer(
             ALOGE("Config update size failed");
             mSignalledError = true;
             work->result = C2_CORRUPTED;
+            work->workletsProcessed = 1u;
             return false;
         }
 
