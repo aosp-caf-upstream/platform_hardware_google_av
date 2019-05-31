@@ -121,6 +121,24 @@ protected:
      */
     void finish(uint64_t frameIndex, std::function<void(const std::unique_ptr<C2Work> &)> fillWork);
 
+    /**
+     * Clone pending or current work and send the work back to client.
+     *
+     * This method will retrieve and clone the pending or current work according
+     * to |frameIndex| and feed the work into |fillWork| function. |fillWork|
+     * must be "non-blocking". Once |fillWork| returns the filled work will be
+     * returned to the client.
+     *
+     * \param[in]   frameIndex    the index of the work
+     * \param[in]   currentWork   the current work under processing
+     * \param[in]   fillWork      the function to fill the retrieved work.
+     */
+    void cloneAndSend(
+            uint64_t frameIndex,
+            const std::unique_ptr<C2Work> &currentWork,
+            std::function<void(const std::unique_ptr<C2Work> &)> fillWork);
+
+
     std::shared_ptr<C2Buffer> createLinearBuffer(
             const std::shared_ptr<C2LinearBlock> &block);
 
@@ -216,7 +234,8 @@ private:
     typedef std::unordered_map<uint64_t, std::unique_ptr<C2Work>> PendingWork;
     Mutexed<PendingWork> mPendingWork;
 
-    std::shared_ptr<C2BlockPool> mOutputBlockPool;
+    class BlockingBlockPool;
+    std::shared_ptr<BlockingBlockPool> mOutputBlockPool;
 
     SimpleC2Component() = delete;
 };

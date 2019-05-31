@@ -44,6 +44,7 @@
 #include <cutils/native_handle.h>
 #include <media/omx/1.0/WOmxNode.h>
 #include <media/stagefright/MediaCodecConstants.h>
+#include <media/stagefright/foundation/ALookup.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 #include <media/stagefright/omx/OMXUtils.h>
 #include <media/stagefright/xmlparser/MediaCodecsXmlParser.h>
@@ -350,7 +351,7 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
     }
 
     bool surfaceTest(Codec2Client::CreateInputSurface());
-    if (option == 0 || !surfaceTest) {
+    if (option == 0 || (option != 4 && !surfaceTest)) {
         buildOmxInfo(parser, writer);
     }
 
@@ -407,6 +408,7 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
             break;
         }
 
+        ALOGV("canonName = %s", canonName.c_str());
         std::unique_ptr<MediaCodecInfoWriter> codecInfo = writer->addMediaCodecInfo();
         codecInfo->setName(trait.name.c_str());
         codecInfo->setOwner("codec2");
@@ -450,6 +452,18 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
                         asString(err), asString(profileQuery[0].status));
                 if (err == C2_OK && profileQuery[0].status == C2_OK) {
                     if (profileQuery[0].values.type == C2FieldSupportedValues::VALUES) {
+                        std::vector<std::shared_ptr<C2ParamDescriptor>> supportedParams;
+                        bool hdrSupported = false;
+                        err = intf->querySupportedParams(&supportedParams);
+                        if (err == C2_OK) {
+                            for (const std::shared_ptr<C2ParamDescriptor> &desc : supportedParams) {
+                                if (desc->index().coreIndex() == C2StreamHdrStaticInfo::CORE_INDEX) {
+                                    hdrSupported = true;
+                                    break;
+                                }
+                            }
+                        }
+                        ALOGV("HDR %ssupported", hdrSupported ? "" : "not ");
                         for (C2Value::Primitive profile : profileQuery[0].values.values) {
                             pl.profile = (C2Config::profile_t)profile.ref<uint32_t>();
                             std::vector<std::unique_ptr<C2SettingResult>> failures;
@@ -467,15 +481,31 @@ status_t Codec2InfoBuilder::buildMediaCodecList(MediaCodecListWriter* writer) {
                                     C2Value::Primitive level = levelQuery[0].values.values.back();
                                     pl.level = (C2Config::level_t)level.ref<uint32_t>();
                                     ALOGV("supporting level: %u", pl.level);
+                                    bool added = false;
                                     int32_t sdkProfile, sdkLevel;
                                     if (mapper && mapper->mapProfile(pl.profile, &sdkProfile)
                                             && mapper->mapLevel(pl.level, &sdkLevel)) {
                                         caps->addProfileLevel(
                                                 (uint32_t)sdkProfile, (uint32_t)sdkLevel);
                                         gotProfileLevels = true;
+                                        added = true;
                                     } else if (!mapper) {
+                                        sdkProfile = pl.profile;
+                                        sdkLevel = pl.level;
                                         caps->addProfileLevel(pl.profile, pl.level);
                                         gotProfileLevels = true;
+                                        added = true;
+                                    }
+                                    if (added && hdrSupported) {
+                                        static ALookup<int32_t, int32_t> sHdrProfileMap = {
+                                            { VP9Profile2, VP9Profile2HDR },
+                                            { VP9Profile3, VP9Profile3HDR },
+                                        };
+                                        int32_t sdkHdrProfile;
+                                        if (sHdrProfileMap.lookup(sdkProfile, &sdkHdrProfile)) {
+                                            caps->addProfileLevel(
+                                                    (uint32_t)sdkHdrProfile, (uint32_t)sdkLevel);
+                                        }
                                     }
 
                                     // for H.263 also advertise the second highest level if the
