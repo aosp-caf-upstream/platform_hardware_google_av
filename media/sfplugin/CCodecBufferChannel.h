@@ -43,7 +43,6 @@ public:
     virtual void onError(status_t err, enum ActionCode actionCode) = 0;
     virtual void onOutputFramesRendered(int64_t mediaTimeUs, nsecs_t renderTimeNs) = 0;
     virtual void onWorkQueued(bool eos) = 0;
-    virtual void onOutputBuffersChanged() = 0;
 };
 
 /**
@@ -218,7 +217,6 @@ private:
     bool handleWork(
             std::unique_ptr<C2Work> work, const sp<AMessage> &outputFormat,
             const C2StreamInitDataInfo::output *initData);
-    void sendOutputBuffers();
 
     QueueSync mSync;
     sp<MemoryDealer> mDealer;
@@ -273,36 +271,44 @@ private:
     //    CCodecBufferChannel whose outputs have not been returned from the
     //    component (by calling onWorkDone()) does not exceed a certain limit.
     //    (Let us call this the "component" capacity.)
+    // 3. The number of work items that have been received by
+    //    CCodecBufferChannel whose outputs have not been released by the app
+    //    (either by calling discardBuffer() on an output buffer or calling
+    //    renderOutputBuffer()) does not exceed a certain limit. (Let us call
+    //    this the "output" capacity.)
     //
     // These three criteria guarantee that a new input buffer that arrives from
     // the invocation of onInputBufferAvailable() will not
     // 1. overload CCodecBufferChannel's input buffers;
     // 2. overload the component; or
+    // 3. overload CCodecBufferChannel's output buffers if the component
+    //    finishes all the pending work right away.
     //
     struct PipelineCapacity {
         // The number of available input capacity.
         std::atomic_int input;
         // The number of available component capacity.
         std::atomic_int component;
+        // The number of available output capacity.
+        std::atomic_int output;
 
         PipelineCapacity();
-        // Set the values of #input and #component.
-        void initialize(int newInput, int newComponent,
+        // Set the values of #component and #output.
+        void initialize(int newInput, int newComponent, int newOutput,
                         const char* newName = "<UNKNOWN COMPONENT>",
                         const char* callerTag = nullptr);
 
-        // Return true and decrease #input and #component by one if
+        // Return true and decrease #input, #component and #output by one if
         // they are all greater than zero; return false otherwise.
         //
         // callerTag is used for logging only.
         //
         // allocate() is called by CCodecBufferChannel to check whether it can
         // receive another input buffer. If the return value is true,
-        // onInputBufferAvailable() and onOutputBufferAvailable() can be called
-        // afterwards.
+        // onInputBufferAvailable() can (and will) be called afterwards.
         bool allocate(const char* callerTag = nullptr);
 
-        // Increase #input and #component by one.
+        // Increase #input, #component and #output by one.
         //
         // callerTag is used for logging only.
         //
@@ -329,51 +335,20 @@ private:
         // onWorkDone() is called.
         int freeComponentSlot(const char* callerTag = nullptr);
 
+        // Increase #output by one and return the updated value.
+        //
+        // callerTag is used for logging only.
+        //
+        // freeOutputSlot() is called by CCodecBufferChannel when
+        // discardBuffer() is called on an output buffer or when
+        // renderOutputBuffer() is called.
+        int freeOutputSlot(const char* callerTag = nullptr);
+
     private:
         // Component name. Used for logging.
         const char* mName;
     };
     PipelineCapacity mAvailablePipelineCapacity;
-
-    class ReorderStash {
-    public:
-        struct Entry {
-            inline Entry() : buffer(nullptr), timestamp(0), flags(0), ordinal({0, 0, 0}) {}
-            inline Entry(
-                    const std::shared_ptr<C2Buffer> &b,
-                    int64_t t,
-                    int32_t f,
-                    const C2WorkOrdinalStruct &o)
-                : buffer(b), timestamp(t), flags(f), ordinal(o) {}
-            std::shared_ptr<C2Buffer> buffer;
-            int64_t timestamp;
-            int32_t flags;
-            C2WorkOrdinalStruct ordinal;
-        };
-
-        ReorderStash();
-
-        void clear();
-        void setDepth(uint32_t depth);
-        void setKey(C2Config::ordinal_key_t key);
-        bool pop(Entry *entry);
-        void emplace(
-                const std::shared_ptr<C2Buffer> &buffer,
-                int64_t timestamp,
-                int32_t flags,
-                const C2WorkOrdinalStruct &ordinal);
-        void defer(const Entry &entry);
-        bool hasPending() const;
-
-    private:
-        std::list<Entry> mPending;
-        std::list<Entry> mStash;
-        uint32_t mDepth;
-        C2Config::ordinal_key_t mKey;
-
-        bool less(const C2WorkOrdinalStruct &o1, const C2WorkOrdinalStruct &o2);
-    };
-    Mutexed<ReorderStash> mReorderStash;
 
     std::atomic_bool mInputMetEos;
     std::atomic_int64_t mPendingEosTimestamp;
