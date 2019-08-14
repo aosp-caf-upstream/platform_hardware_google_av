@@ -533,10 +533,6 @@ public:
         mCodec->onWorkQueued(eos);
     }
 
-    void onOutputBuffersChanged() override {
-        mCodec->mCallback->onOutputBuffersChanged();
-    }
-
 private:
     CCodec *mCodec;
 };
@@ -1329,10 +1325,6 @@ void CCodec::flush() {
 
     std::list<std::unique_ptr<C2Work>> flushedWork;
     c2_status_t err = comp->flush(C2Component::FLUSH_COMPONENT, &flushedWork);
-    {
-        Mutexed<std::list<std::unique_ptr<C2Work>>>::Locked queue(mWorkDoneQueue);
-        flushedWork.splice(flushedWork.end(), *queue);
-    }
     if (err != C2_OK) {
         // TODO: convert err into status_t
         mCallback->onError(UNKNOWN_ERROR, ACTION_CODE_FATAL);
@@ -1580,10 +1572,7 @@ void CCodec::onMessageReceived(const sp<AMessage> &msg) {
                 (new AMessage(kWhatWorkDone, this))->post();
             }
 
-            if (work->worklets.empty()
-                    || !(work->worklets.front()->output.flags & C2FrameData::FLAG_INCOMPLETE)) {
-                subQueuedWorkCount(1);
-            }
+            subQueuedWorkCount(1);
             // handle configuration changes in work done
             Mutexed<Config>::Locked config(mConfig);
             bool changed = false;
@@ -1708,7 +1697,7 @@ void CCodec::onWorkQueued(bool eos) {
         deadline->set(std::chrono::steady_clock::now() + 3s, "eos");
     }
     // TODO: query and use input/pipeline/output delay combined
-    if (count >= 4) {
+    if (count >= 8) {
         CCodecWatchdog::getInstance()->watch(this);
         Mutexed<NamedTimePoint>::Locked deadline(mQueueDeadline);
         deadline->set(std::chrono::steady_clock::now() + 3s, "queue");
