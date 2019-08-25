@@ -132,56 +132,6 @@ void SimpleC2Component::WorkHandler::onMessageReceived(const sp<AMessage> &msg) 
     }
 }
 
-class SimpleC2Component::BlockingBlockPool : public C2BlockPool {
-public:
-    BlockingBlockPool(const std::shared_ptr<C2BlockPool>& base): mBase{base} {}
-
-    virtual local_id_t getLocalId() const override {
-        return mBase->getLocalId();
-    }
-
-    virtual C2Allocator::id_t getAllocatorId() const override {
-        return mBase->getAllocatorId();
-    }
-
-    virtual c2_status_t fetchLinearBlock(
-            uint32_t capacity,
-            C2MemoryUsage usage,
-            std::shared_ptr<C2LinearBlock>* block) {
-        c2_status_t status;
-        do {
-            status = mBase->fetchLinearBlock(capacity, usage, block);
-        } while (status == C2_TIMED_OUT);
-        return status;
-    }
-
-    virtual c2_status_t fetchCircularBlock(
-            uint32_t capacity,
-            C2MemoryUsage usage,
-            std::shared_ptr<C2CircularBlock>* block) {
-        c2_status_t status;
-        do {
-            status = mBase->fetchCircularBlock(capacity, usage, block);
-        } while (status == C2_TIMED_OUT);
-        return status;
-    }
-
-    virtual c2_status_t fetchGraphicBlock(
-            uint32_t width, uint32_t height, uint32_t format,
-            C2MemoryUsage usage,
-            std::shared_ptr<C2GraphicBlock>* block) {
-        c2_status_t status;
-        do {
-            status = mBase->fetchGraphicBlock(width, height, format, usage,
-                                              block);
-        } while (status == C2_TIMED_OUT);
-        return status;
-    }
-
-private:
-    std::shared_ptr<C2BlockPool> mBase;
-};
-
 ////////////////////////////////////////////////////////////////////////////////
 
 namespace {
@@ -411,35 +361,11 @@ void SimpleC2Component::finish(
     }
     if (work) {
         fillWork(work);
-        std::shared_ptr<C2Component::Listener> listener = mExecState.lock()->mListener;
+        Mutexed<ExecState>::Locked state(mExecState);
+        std::shared_ptr<C2Component::Listener> listener = state->mListener;
+        state.unlock();
         listener->onWorkDone_nb(shared_from_this(), vec(work));
         ALOGV("returning pending work");
-    }
-}
-
-void SimpleC2Component::cloneAndSend(
-        uint64_t frameIndex,
-        const std::unique_ptr<C2Work> &currentWork,
-        std::function<void(const std::unique_ptr<C2Work> &)> fillWork) {
-    std::unique_ptr<C2Work> work(new C2Work);
-    if (currentWork->input.ordinal.frameIndex == frameIndex) {
-        work->input.flags = currentWork->input.flags;
-        work->input.ordinal = currentWork->input.ordinal;
-    } else {
-        Mutexed<PendingWork>::Locked pending(mPendingWork);
-        if (pending->count(frameIndex) == 0) {
-            ALOGW("unknown frame index: %" PRIu64, frameIndex);
-            return;
-        }
-        work->input.flags = pending->at(frameIndex)->input.flags;
-        work->input.ordinal = pending->at(frameIndex)->input.ordinal;
-    }
-    work->worklets.emplace_back(new C2Worklet);
-    if (work) {
-        fillWork(work);
-        std::shared_ptr<C2Component::Listener> listener = mExecState.lock()->mListener;
-        listener->onWorkDone_nb(shared_from_this(), vec(work));
-        ALOGV("cloned and sending work");
     }
 }
 
@@ -496,16 +422,12 @@ bool SimpleC2Component::processQueue() {
                 }
             }
 
-            std::shared_ptr<C2BlockPool> blockPool;
-            err = GetCodec2BlockPool(poolId, shared_from_this(), &blockPool);
+            err = GetCodec2BlockPool(poolId, shared_from_this(), &mOutputBlockPool);
             ALOGD("Using output block pool with poolID %llu => got %llu - %d",
                     (unsigned long long)poolId,
                     (unsigned long long)(
-                            blockPool ? blockPool->getLocalId() : 111000111),
+                            mOutputBlockPool ? mOutputBlockPool->getLocalId() : 111000111),
                     err);
-            if (err == C2_OK) {
-                mOutputBlockPool = std::make_shared<BlockingBlockPool>(blockPool);
-            }
             return err;
         }();
         if (err != C2_OK) {
